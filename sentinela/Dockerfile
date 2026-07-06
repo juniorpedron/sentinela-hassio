@@ -1,4 +1,4 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-python:3.12
+ARG BUILD_FROM=ghcr.io/home-assistant/aarch64-base-python:3.12-alpine3.18
 FROM ${BUILD_FROM}
 
 # Ferramentas de rede: ping/arp (descoberta), iproute2 (modo promiscuo),
