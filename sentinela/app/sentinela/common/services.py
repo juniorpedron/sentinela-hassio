@@ -74,6 +74,8 @@ _RULES: list[tuple[str, tuple[str, str]]] = [
     ("apple", ("Apple", "Apple")),
     ("cloudflare", ("Cloudflare", "Infra")),
     ("cloudfront", ("Amazon CloudFront", "CDN")),
+    ("amazonalexa", ("Amazon Alexa", "Nuvem")),
+    ("amazonvideo", ("Amazon Prime Video", "Streaming")),
     ("amazonaws", ("Amazon AWS", "Nuvem")),
     ("media-amazon", ("Amazon", "Nuvem")),
     ("amazon", ("Amazon", "Nuvem")),
@@ -86,6 +88,32 @@ _RULES: list[tuple[str, tuple[str, str]]] = [
     ("fortinet", ("Fortinet (VPN)", "Sistema")),
     ("ntp.org", ("Relogio (NTP)", "Sistema")),
     ("pool.ntp", ("Relogio (NTP)", "Sistema")),
+    ("ntp.br", ("Relogio (NTP)", "Sistema")),
+    # --- IoT / casa inteligente ---
+    ("crealitycloud", ("Creality (impressora 3D)", "IoT")),
+    ("creality", ("Creality (impressora 3D)", "IoT")),
+    ("tuya", ("Tuya (casa inteligente)", "IoT")),
+    ("shelly", ("Shelly (sensor)", "IoT")),
+    ("allterco", ("Shelly (sensor)", "IoT")),
+    ("sonoff", ("Sonoff", "IoT")),
+    ("ewelink", ("Sonoff (eWeLink)", "IoT")),
+    ("a2z.com", ("Amazon / Alexa", "Nuvem")),
+    ("aws.dev", ("Amazon (diagnostico)", "Nuvem")),
+    # --- vendors ---
+    ("samsung", ("Samsung", "Sistema")),
+    ("intelbras", ("Intelbras (rede)", "Sistema")),
+    ("nvidia", ("Nvidia", "Sistema")),
+    ("harman", ("Harman Kardon", "Sistema")),
+    # --- infra / sistema ---
+    ("in-addr.arpa", ("DNS reverso", "Sistema")),
+    ("ip6.arpa", ("DNS reverso", "Sistema")),
+    ("home-assistant", ("Home Assistant", "Sistema")),
+    ("hass.io", ("Home Assistant", "Sistema")),
+    ("digicert", ("Certificados (OCSP)", "Sistema")),
+    ("sectigo", ("Certificados (OCSP)", "Sistema")),
+    ("letsencrypt", ("Certificados", "Sistema")),
+    ("msedge", ("Microsoft (Edge/CDN)", "Microsoft")),
+    ("msn.com", ("MSN (Microsoft)", "Microsoft")),
 ]
 
 _CAT_DEFAULT = "Outro"

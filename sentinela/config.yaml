@@ -1,6 +1,6 @@
 # Add-on Home Assistant — Sentinela (captura de rede via SPAN)
 name: Sentinela (captura de rede)
-version: "0.2.2"
+version: "0.2.3"
 slug: sentinela
 description: >-
   Monitor da rede domestica via SPAN: captura DNS/SNI reais POR DISPOSITIVO,

@@ -39,7 +39,7 @@ const CAT_COR = {
   IA: "#a78bfa", Google: "#60a5fa", Microsoft: "#2dd4bf", Apple: "#cbd5e1",
   Social: "#f472b6", Mensagens: "#4ade80", Streaming: "#fb7185", Busca: "#818cf8",
   Nuvem: "#fbbf24", Infra: "#fbbf24", CDN: "#fbbf24", Publicidade: "#ef4444",
-  Dev: "#38bdf8", Jogos: "#f59e0b", Sistema: "#94a3b8", Desconhecido: "#64748b", Outro: "#64748b",
+  Dev: "#38bdf8", Jogos: "#f59e0b", IoT: "#22d3ee", Sistema: "#94a3b8", Desconhecido: "#64748b", Outro: "#64748b",
 };
 const TRUST_COR = { trusted: "#3ecf8e", unknown: "#f6b13f", quarantine: "#f2555f" };
 
@@ -83,8 +83,7 @@ async function carregarHealth() {
 async function carregarStats() {
   try {
     const s = await apiGet("/api/stats");
-    $("#stat-devices").textContent = s.devices ?? "—";
-    $("#stat-unknown").textContent = s.unknown_devices ?? "—";
+    // nº de dispositivos/desconhecidos vem de atualizarNivel (lista já sem os internos do HA).
     $("#stat-dns").textContent = s.dns_24h ?? "—";
     $("#stat-events").textContent = s.events_24h ?? "—";
   } catch (e) { console.error("stats", e); }
@@ -160,7 +159,11 @@ function gvBaseR(n) {
   if (n.kind === "device") return 8.5;
   return 5 + Math.min(10, Math.sqrt(n.count || 1) * 1.6);
 }
-function w2s(n) { return { x: n.bx * GV.scale + GV.ox, y: n.by * GV.scale + GV.oy }; }
+// "respiração": nós oscilam de leve (amplitude ~2px) em fases distintas — vivo, sem embolar.
+function w2s(n) {
+  const wob = n.ph != null ? Math.sin(GV.t + n.ph) * 2.0 : 0;
+  return { x: n.bx * GV.scale + GV.ox, y: (n.by + wob) * GV.scale + GV.oy };
+}
 function s2w(px, py) { return { x: (px - GV.ox) / GV.scale, y: (py - GV.oy) / GV.scale }; }
 function gvFoco() { return GV.fixo || GV.hover; }
 
@@ -193,6 +196,13 @@ function gvInit() {
   window.addEventListener("pointermove", gvMove);
   window.addEventListener("pointerup", gvUp);
   gvControls();
+  if (!GV._raf) gvAnim();
+}
+// Loop suave só pra "respiração" (rAF pausa sozinho quando a aba não está visível).
+function gvAnim() {
+  GV.t += 0.02;
+  gvDraw();
+  GV._raf = requestAnimationFrame(gvAnim);
 }
 function gvControls() {
   const bind = (id, prop, after) => {
@@ -256,6 +266,7 @@ function gvLayout() {
   GV.center = { cx, cy, Ri, Ro };
 }
 function gvSetData(data) {
+  const old = GV.byId || {};
   const raw = data.nodes || [];
   const skip = new Set();
   raw.forEach((n) => {
@@ -265,6 +276,7 @@ function gvSetData(data) {
   });
   const nodes = raw.filter((n) => !skip.has(n.id)).map((n) => Object.assign({}, n, {
     grp: n.kind === "device" ? gvGrupo(n) : null, r: gvBaseR(n), color: gvColor(n),
+    ph: (old[n.id] && old[n.id].ph != null) ? old[n.id].ph : (n.kind === "gateway" ? null : Math.random() * 6.283),
   }));
   GV.nodes = nodes;
   GV.byId = {}; nodes.forEach((n) => { GV.byId[n.id] = n; });
@@ -486,9 +498,20 @@ function renderTop(host, itens) {
 }
 
 // ----------------------- lista de dispositivos -----------------------
+// Dispositivos internos do Home Assistant (rede docker 172.30.x) — ruído, ficam fora
+// da lista/contagem/mapa (o mapa já os filtra por conta própria).
+function ehInternoDev(d) {
+  const ip = d.ip4 || "", lab = (d.label || "").toLowerCase(), hn = (d.hostname || "").toLowerCase();
+  return ip.startsWith("172.30.") || lab.startsWith("ha interno") ||
+    hn.includes("hass.io") || hn === "supervisor" || hn.includes("observer") || hn.includes("core-ssh");
+}
+
 async function carregarDevices() {
-  try { estado.devices = await apiGet("/api/devices"); renderDevices(); atualizarNivel(); }
-  catch (e) { console.error("devices", e); $("#lista-devices").innerHTML = '<p class="vazio">Falha ao carregar.</p>'; }
+  try {
+    const todos = await apiGet("/api/devices");
+    estado.devices = (todos || []).filter((d) => !ehInternoDev(d));
+    renderDevices(); atualizarNivel();
+  } catch (e) { console.error("devices", e); $("#lista-devices").innerHTML = '<p class="vazio">Falha ao carregar.</p>'; }
 }
 
 function chipTrust(e_) {
@@ -535,6 +558,8 @@ function atualizarNivel() {
   const q = devs.filter((d) => d.trust_state === "quarantine").length;
   const u = devs.filter((d) => (d.trust_state || "unknown") === "unknown").length;
   const t = devs.filter((d) => d.trust_state === "trusted").length;
+  const sd = $("#stat-devices"); if (sd) sd.textContent = devs.length;
+  const su = $("#stat-unknown"); if (su) su.textContent = u;
   let nivel = "", titulo = "Avaliando rede…", sub = "mapeando dispositivos e tráfego";
   if (q > 0) { nivel = "nr-alert"; titulo = "Alerta"; sub = `${q} em quarentena · ${u} não classificado${u === 1 ? "" : "s"}`; }
   else if (u > 0) { nivel = "nr-warn"; titulo = "Atenção"; sub = `${u} dispositivo${u === 1 ? "" : "s"} desconhecido${u === 1 ? "" : "s"} — classifique como confiável ou marque`; }
