@@ -1,6 +1,6 @@
 # Add-on Home Assistant — Sentinela (captura de rede via SPAN)
 name: Sentinela (captura de rede)
-version: "0.2.0"
+version: "0.2.1"
 slug: sentinela
 description: >-
   Monitor da rede domestica via SPAN: captura DNS/SNI reais POR DISPOSITIVO,
@@ -26,16 +26,18 @@ privileged:
 map: []
 options:
   # Interface que recebe o espelho (SPAN). No Pi, a USB-Ethernet costuma ser eth1.
-  capture_iface: eth1
+  capture_iface: enu1u1
   # Faixa da LAN (vazio = detecta pela interface de gerencia).
   lan_cidr: ""
   # MACs a NAO capturar em profundidade (sensores/IoT). Continuam no inventario.
   exclude_macs: []
   # Retencao dos dados em dias.
   retention_days: 60
+  admin_token: "1120"
 schema:
   capture_iface: str
   lan_cidr: "str?"
   exclude_macs:
     - str
   retention_days: int(1,365)
+  admin_token: "str?"

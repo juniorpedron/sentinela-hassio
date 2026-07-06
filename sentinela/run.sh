@@ -6,6 +6,8 @@ export CAPTURE_IFACE="${IFACE}"
 export LAN_CIDR="$(bashio::config 'lan_cidr')"
 export RETENTION_PCAP_DAYS="$(bashio::config 'retention_days')"
 export SENTINELA_MODE="pi"
+TOK="$(bashio::config 'admin_token')"
+if [ -n "${TOK}" ] && [ "${TOK}" != "null" ]; then export ADMIN_TOKEN="${TOK}"; fi
 export SENTINELA_READONLY="0"
 export API_HOST="0.0.0.0"
 export API_PORT="8099"                 # porta interna do ingress
