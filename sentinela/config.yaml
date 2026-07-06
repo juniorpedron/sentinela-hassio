@@ -1,0 +1,41 @@
+# Add-on Home Assistant — Sentinela (captura de rede via SPAN)
+name: Sentinela (captura de rede)
+version: "0.2.0"
+slug: sentinela
+description: >-
+  Monitor da rede domestica via SPAN: captura DNS/SNI reais POR DISPOSITIVO,
+  inventario, presenca, mapa da rede e alertas. Le a porta espelhada do switch
+  numa interface dedicada (promiscua). Lista de exclusao para sensores/IoT.
+url: "https://github.com/juniorpedron/sentinela-hassio"
+# Pi 5 = aarch64.
+arch:
+  - aarch64
+init: false
+# Dashboard servido DENTRO da UI autenticada do Home Assistant (sem porta exposta).
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:shield-search
+panel_title: Sentinela
+# Acesso direto as interfaces de rede do host (para ler a interface espelho).
+host_network: true
+# Privilegios: NET_RAW (sniffing) + NET_ADMIN (por a interface em modo promiscuo).
+privileged:
+  - NET_RAW
+  - NET_ADMIN
+# Sem mapear pastas do host; dados persistem no volume /data do add-on.
+map: []
+options:
+  # Interface que recebe o espelho (SPAN). No Pi, a USB-Ethernet costuma ser eth1.
+  capture_iface: eth1
+  # Faixa da LAN (vazio = detecta pela interface de gerencia).
+  lan_cidr: ""
+  # MACs a NAO capturar em profundidade (sensores/IoT). Continuam no inventario.
+  exclude_macs: []
+  # Retencao dos dados em dias.
+  retention_days: 60
+schema:
+  capture_iface: str
+  lan_cidr: "str?"
+  exclude_macs:
+    - str
+  retention_days: int(1,365)

@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+aiosqlite
+zeroconf
+psutil
+mac-vendor-lookup
+python-dotenv
+scapy

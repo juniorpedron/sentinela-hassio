@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentinela — Monitor de Rede</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- ================= CABECALHO ================= -->
+  <header class="topo">
+    <div class="topo-marca">
+      <span class="logo">◈</span>
+      <div>
+        <h1>Sentinela</h1>
+        <p class="subtitulo">Monitor de rede doméstica</p>
+      </div>
+      <span id="badge-modo" class="badge-modo" title="Modo de operação">…</span>
+      <span id="badge-ro" class="badge-ro oculto" title="Somente visualização — rede não-confiável">● SOMENTE LEITURA</span>
+    </div>
+
+    <div class="topo-controles">
+      <button id="btn-sniffer" class="btn-sniffer off" title="Liga/desliga a captura de pacotes (sniffer L2)">
+        ○ Sniffer
+      </button>
+    </div>
+
+  </header>
+
+  <!-- ============ NÍVEL DA REDE (assinatura) ============ -->
+  <section class="nivel-rede" id="nivel-rede">
+    <div class="nr-status">
+      <span class="nr-lamp"></span>
+      <div>
+        <div class="nr-titulo" id="nr-titulo">Avaliando rede…</div>
+        <div class="nr-sub" id="nr-sub">mapeando dispositivos e tráfego</div>
+      </div>
+    </div>
+    <div class="nr-metricas">
+      <div class="nr-metrica"><span class="nr-num" id="stat-devices">—</span><span class="nr-rot">dispositivos</span></div>
+      <div class="nr-metrica"><span class="nr-num amb" id="stat-unknown">—</span><span class="nr-rot">desconhecidos</span></div>
+      <div class="nr-metrica"><span class="nr-num" id="stat-dns">—</span><span class="nr-rot">dns / 24h</span></div>
+      <div class="nr-metrica"><span class="nr-num" id="stat-events">—</span><span class="nr-rot">eventos / 24h</span></div>
+    </div>
+  </section>
+
+  <!-- Aviso de LIMITE HONESTO (mostrado apenas no modo PC) -->
+  <div id="aviso-limite" class="aviso-limite oculto">
+    <strong>Modo PC (standalone):</strong> neste modo o Sentinela só enxerga o
+    próprio tráfego do notebook, broadcast/multicast e o que descobre ativamente
+    (ARP, ping sweep, mDNS, SSDP, DNS reverso). <em>Não</em> vê o conteúdo unicast
+    de outros dispositivos — isso exige o modo Pi com espelhamento de porta (SPAN).
+  </div>
+
+  <!-- ================= MAPA DA REDE ================= -->
+  <section class="grafo-secao">
+    <div class="card">
+      <div class="card-cab">
+        <h3>Mapa da rede — dispositivos e conexões</h3>
+        <div class="grafo-acoes">
+          <span class="grafo-hint">● dispositivos &nbsp; ● serviços — clique num nó pra ver mais</span>
+          <button id="grafo-atualizar" class="btn-mini">atualizar</button>
+        </div>
+      </div>
+      <div class="grafo-wrap">
+        <canvas id="grafo-canvas" class="grafo-canvas"></canvas>
+        <div class="grafo-ctrl" id="grafo-ctrl">
+          <div class="gc-tit mono">ajustes</div>
+          <label class="gc-row"><span>brilho</span><input type="range" id="gc-glow" min="0" max="1.4" step="0.05" value="0.7" /></label>
+          <label class="gc-row"><span>tamanho</span><input type="range" id="gc-size" min="0.5" max="1.8" step="0.05" value="1" /></label>
+          <label class="gc-row"><span>conexões</span><input type="range" id="gc-link" min="0" max="0.6" step="0.02" value="0.26" /></label>
+          <label class="gc-row"><span>repulsão</span><input type="range" id="gc-rep" min="0.4" max="2" step="0.1" value="1" /></label>
+          <button class="btn-mini" id="gc-reset">recentralizar</button>
+        </div>
+        <aside id="grafo-info" class="grafo-info oculto"></aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RESUMO (grafico + tops) ================= -->
+  <section class="resumo">
+    <div class="card card-chart">
+      <div class="card-cab">
+        <h3>Atividade — 24h</h3>
+        <span class="legenda"><i class="dot dot-teal"></i>conexões <i class="dot dot-amb"></i>dns</span>
+      </div>
+      <div id="chart" class="chart"><p class="vazio">Carregando…</p></div>
+    </div>
+    <div class="card">
+      <div class="card-cab"><h3>Top domínios</h3></div>
+      <div id="top-domains" class="top-list"><p class="vazio">Carregando…</p></div>
+    </div>
+    <div class="card">
+      <div class="card-cab"><h3>Top apps</h3></div>
+      <div id="top-apps" class="top-list"><p class="vazio">Carregando…</p></div>
+    </div>
+  </section>
+
+  <!-- Barra de exportacao -->
+  <div class="toolbar">
+    <span class="toolbar-rot mono">exportar csv:</span>
+    <a href="api/export?kind=devices">dispositivos</a>
+    <a href="api/export?kind=flows&limit=5000">conexões</a>
+    <a href="api/export?kind=dns&limit=5000">dns</a>
+    <a href="api/export?kind=events&limit=5000">eventos</a>
+  </div>
+
+  <!-- ================= GRID PRINCIPAL ================= -->
+  <main class="grid">
+    <section class="painel" id="painel-devices">
+      <div class="painel-cabecalho">
+        <h2>Dispositivos</h2>
+        <input type="search" id="busca" class="busca"
+          placeholder="buscar por mac, ip, hostname, fabricante…" autocomplete="off" />
+      </div>
+      <div class="lista-devices" id="lista-devices">
+        <p class="vazio">Carregando dispositivos…</p>
+      </div>
+    </section>
+
+    <section class="painel" id="painel-feed">
+      <div class="painel-cabecalho">
+        <h2>Feed ao vivo</h2>
+        <div class="feed-filtros" id="feed-filtros" title="Filtrar tipos no feed">
+          <label><input type="checkbox" data-kind="device" checked /> disp</label>
+          <label><input type="checkbox" data-kind="dns" checked /> dns</label>
+          <label><input type="checkbox" data-kind="flow" checked /> conexões</label>
+          <label><input type="checkbox" data-kind="event" checked /> eventos</label>
+        </div>
+        <span id="status-ws" class="status-ws desconectado" title="Estado do WebSocket">● offline</span>
+      </div>
+      <div class="feed" id="feed">
+        <p class="vazio">Aguardando eventos…</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= PAINEL DE DETALHE (overlay) ================= -->
+  <aside id="detalhe" class="detalhe oculto" aria-hidden="true">
+    <div class="detalhe-cabecalho">
+      <h2 id="detalhe-titulo">Detalhe do dispositivo</h2>
+      <button id="detalhe-fechar" class="btn-fechar" title="Fechar">✕</button>
+    </div>
+    <div class="detalhe-corpo" id="detalhe-corpo"></div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>
