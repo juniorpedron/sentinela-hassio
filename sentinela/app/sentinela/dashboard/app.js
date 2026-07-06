@@ -118,48 +118,68 @@ async function toggleSniffer() {
   setToggle(c.sniffer_enabled);
 }
 
-// ----------------------- mapa da rede (canvas nebula) -----------------------
+// ----------------------- mapa da rede (constelação) -----------------------
+// Layout radial estruturado (sem hairball): gateway no centro, dispositivos num
+// anel interno agrupados por tipo, serviços em setores por categoria no anel
+// externo. Arestas ficam ocultas em repouso e só ACENDEM ao focar (hover/clique)
+// um nó — o que resolve o emaranhado de linhas.
 const GV = { canvas: null, ctx: null, dpr: 1, W: 0, H: 0, nodes: [], edges: [], byId: {},
-  stars: [], clusters: {}, adj: {}, scale: 1, ox: 0, oy: 0, drag: null, pan: null,
-  moved: false, hover: null, started: false, idle: 0,
-  glow: 0.7, nodeSize: 1, linkOp: 0.26, repuls: 1 };
+  adj: {}, stars: [], scale: 1, ox: 0, oy: 0, pan: null, press: null, moved: false,
+  hover: null, fixo: null, started: false, t: 0,
+  glow: 0.8, nodeSize: 1, orb: 1, devLabels: [], catLabels: [], center: null };
 window.__GV = GV;
-window.__abrir = (id)=>abrirDetalhe(id);
+window.__abrir = (id) => abrirDetalhe(id);
 
+// Grupos de dispositivos (anel interno) + cor de cada setor.
+const GV_GRUPOS = ["Rede", "Computadores", "Celulares", "TV & Mídia", "Voz", "IoT", "Outros"];
+const GV_GRUPO_COR = { Rede: "#f5b13b", Computadores: "#5eb1ef", Celulares: "#3ecf8e",
+  "TV & Mídia": "#fb7185", Voz: "#a78bfa", IoT: "#2dd4bf", Outros: "#8aa0b6" };
+
+function gvGrupo(n) {
+  const s = ((n.label || "") + " " + ((n.meta && n.meta.fabricante) || "")).toLowerCase();
+  if (/twibi|modem|roteador|raspberry|\bpi\b|sentinela|gateway|intelbras|huawei|ubiquiti|mikrotik|tp-?link/.test(s)) return "Rede";
+  if (/\bpc\b|macbook|\basus\b|omen|notebook|computador|laptop|desktop|imac|dell|lenovo/.test(s)) return "Computadores";
+  if (/iphone|android|\bwatch\b|celular|galaxy|xiaomi|pixel|dona|tania|tablet|ipad/.test(s)) return "Celulares";
+  if (/\btv\b|firetv|fire tv|chromecast|receiver|harman|\bps4\b|\bps5\b|playstation|xbox|roku|apple ?tv|soundbar/.test(s)) return "TV & Mídia";
+  if (/alexa|echo|nest|google home|homepod/.test(s)) return "Voz";
+  if (/shelly|positivo|creality|controle|sensor|\besp\b|tuya|iot|lâmpada|lampada|plug|tomada|impressora|printer/.test(s)) return "IoT";
+  return "Outros";
+}
+// Esconde nós internos do Home Assistant (rede docker 172.30.x).
+function gvInterno(n) {
+  const ip = (n.meta && n.meta.ipv4) || "", lab = (n.label || "").toLowerCase();
+  return (ip && ip.startsWith("172.30.")) || lab.includes("ha interno") || lab.includes("hass.io");
+}
 function gvColor(n) {
   if (n.kind === "gateway") return "#f5b13b";
   if (n.kind === "device") return TRUST_COR[n.trust_state] || "#8aa0b6";
   return CAT_COR[n.category] || "#7c8aa0";
 }
 function gvBaseR(n) {
-  if (n.kind === "gateway") return 15;
-  if (n.kind === "device") return 8;
-  return 4.5 + Math.min(11, Math.sqrt(n.count || 1) * 1.5);
+  if (n.kind === "gateway") return 16;
+  if (n.kind === "device") return 8.5;
+  return 5 + Math.min(10, Math.sqrt(n.count || 1) * 1.6);
 }
-function gvClusterKey(n) {
-  if (n.kind === "gateway") return "__gw";
-  if (n.kind === "device") return "__dev";
-  return n.category || "Outro";
-}
-function w2s(n) { return { x: n.x * GV.scale + GV.ox, y: n.y * GV.scale + GV.oy }; }
+function w2s(n) { return { x: n.bx * GV.scale + GV.ox, y: n.by * GV.scale + GV.oy }; }
 function s2w(px, py) { return { x: (px - GV.ox) / GV.scale, y: (py - GV.oy) / GV.scale }; }
+function gvFoco() { return GV.fixo || GV.hover; }
 
 function gvResize() {
   const rect = GV.canvas.parentElement.getBoundingClientRect();
   GV.dpr = window.devicePixelRatio || 1;
   GV.W = Math.max(320, Math.floor(rect.width || document.documentElement.clientWidth || 900));
-  GV.H = 560;
+  GV.H = 580;
   GV.canvas.width = GV.W * GV.dpr;
   GV.canvas.height = GV.H * GV.dpr;
   GV.canvas.style.height = GV.H + "px";
   gvMakeStars();
-  gvKick();
+  gvLayout(); gvFit(); gvDraw();
 }
 function gvMakeStars() {
-  const n = Math.floor((GV.W * GV.H) / 5200);
+  const n = Math.floor((GV.W * GV.H) / 6000);
   GV.stars = [];
   for (let k = 0; k < n; k++) {
-    GV.stars.push({ x: Math.random() * GV.W, y: Math.random() * GV.H, r: Math.random() * 1.1 + 0.2, a: Math.random() * 0.5 + 0.15 });
+    GV.stars.push({ x: Math.random() * GV.W, y: Math.random() * GV.H, r: Math.random() * 1.1 + 0.2, a: Math.random() * 0.5 + 0.12 });
   }
 }
 function gvInit() {
@@ -178,155 +198,190 @@ function gvControls() {
   const bind = (id, prop, after) => {
     const el2 = document.getElementById(id);
     if (!el2) return;
-    el2.addEventListener("input", () => { GV[prop] = parseFloat(el2.value); if (after) after(); gvKick(); gvDraw(); });
+    el2.addEventListener("input", () => { GV[prop] = parseFloat(el2.value); if (after) after(); gvDraw(); });
   };
   bind("gc-glow", "glow");
   bind("gc-size", "nodeSize");
-  bind("gc-link", "linkOp");
-  bind("gc-rep", "repuls", () => { for (const n of GV.nodes) { n.vx += (Math.random() - 0.5) * 2; n.vy += (Math.random() - 0.5) * 2; } });
+  bind("gc-orb", "orb", () => { gvLayout(); gvFit(); });
   const rb = document.getElementById("gc-reset");
   if (rb) rb.addEventListener("click", () => { gvFit(); gvDraw(); });
 }
-function gvSetData(data) {
-  const old = GV.byId;
-  const nodes = (data.nodes || []).map((n) => {
-    const p = old[n.id];
-    return Object.assign({}, n, {
-      x: p ? p.x : GV.W / 2 + (Math.random() - 0.5) * 260,
-      y: p ? p.y : GV.H / 2 + (Math.random() - 0.5) * 240,
-      vx: 0, vy: 0, r: gvBaseR(n), color: gvColor(n), ck: gvClusterKey(n),
-    });
+function gvLayout() {
+  if (!GV.nodes.length) return;
+  const cx = GV.W / 2, cy = GV.H / 2;
+  const Ri = Math.min(GV.W, GV.H) * 0.205 * GV.orb;  // anel de dispositivos
+  const Ro = Math.min(GV.W, GV.H) * 0.60 * GV.orb;   // anel de serviços
+  const gw = GV.nodes.find((n) => n.kind === "gateway");
+  if (gw) { gw.bx = cx; gw.by = cy; }
+  // dispositivos: agrupados por tipo em arcos contíguos
+  const devs = GV.nodes.filter((n) => n.kind === "device");
+  devs.sort((a, b) => GV_GRUPOS.indexOf(a.grp) - GV_GRUPOS.indexOf(b.grp));
+  const nd = devs.length || 1;
+  GV.devLabels = [];
+  const gStart = {};
+  devs.forEach((n, i) => {
+    const ang = -Math.PI / 2 + (i / nd) * Math.PI * 2;
+    n.ang = ang; n.bx = cx + Math.cos(ang) * Ri; n.by = cy + Math.sin(ang) * Ri;
+    if (gStart[n.grp] === undefined) gStart[n.grp] = { a0: ang };
+    gStart[n.grp].aN = ang;
   });
+  for (const g of GV_GRUPOS) {
+    const s = gStart[g]; if (!s) continue;
+    const am = (s.a0 + s.aN) / 2;
+    GV.devLabels.push({ txt: g.toUpperCase(), x: cx + Math.cos(am) * (Ri * 0.66), y: cy + Math.sin(am) * (Ri * 0.66), cor: GV_GRUPO_COR[g] });
+  }
+  // serviços: setores por categoria no anel externo ("Outro" por último)
+  const svcs = GV.nodes.filter((n) => n.kind === "service");
+  const cats = {}; svcs.forEach((n) => { (cats[n.category] = cats[n.category] || []).push(n); });
+  const ehOutro = (k) => (k === "Outro" || k === "Desconhecido");
+  const catKeys = Object.keys(cats).sort((a, b) => {
+    if (ehOutro(a) !== ehOutro(b)) return ehOutro(a) ? 1 : -1;
+    return cats[b].length - cats[a].length;
+  });
+  GV.catLabels = [];
+  const ns2 = svcs.length || 1; let acc = 0;
+  for (const c of catKeys) {
+    const arr = cats[c], frac = arr.length / ns2, span = frac * Math.PI * 2;
+    const a0 = -Math.PI / 2 + acc * Math.PI * 2, aCenter = a0 + span / 2;
+    arr.forEach((n, j) => {
+      const t = arr.length === 1 ? 0.5 : j / (arr.length - 1);
+      const a = a0 + t * span * 0.86 + span * 0.07;
+      const rr = Ro + ((j % 2) ? 18 : -6);
+      n.ang = a; n.bx = cx + Math.cos(a) * rr; n.by = cy + Math.sin(a) * rr;
+    });
+    GV.catLabels.push({ txt: c.toUpperCase(), x: cx + Math.cos(aCenter) * (Ro + 52), y: cy + Math.sin(aCenter) * (Ro + 52),
+      cor: CAT_COR[c] || "#7c8aa0", a0, span, cx, cy, Ro });
+    acc += frac;
+  }
+  GV.center = { cx, cy, Ri, Ro };
+}
+function gvSetData(data) {
+  const raw = data.nodes || [];
+  const skip = new Set();
+  raw.forEach((n) => {
+    if (n.kind === "device" && gvInterno(n)) skip.add(n.id);
+    // ruído: serviço sem categoria e com 1 só acesso (aws-diagnostic, .arpa, etc.)
+    if (n.kind === "service" && (n.category === "Outro" || n.category === "Desconhecido") && (n.count || 0) < 2) skip.add(n.id);
+  });
+  const nodes = raw.filter((n) => !skip.has(n.id)).map((n) => Object.assign({}, n, {
+    grp: n.kind === "device" ? gvGrupo(n) : null, r: gvBaseR(n), color: gvColor(n),
+  }));
   GV.nodes = nodes;
   GV.byId = {}; nodes.forEach((n) => { GV.byId[n.id] = n; });
-  GV.edges = data.edges || [];
+  GV.edges = (data.edges || []).filter((e) => !skip.has(e.source) && !skip.has(e.target) && GV.byId[e.source] && GV.byId[e.target]);
   GV.adj = {};
   for (const e of GV.edges) { (GV.adj[e.source] = GV.adj[e.source] || new Set()).add(e.target); (GV.adj[e.target] = GV.adj[e.target] || new Set()).add(e.source); }
-
-  // Centros de cluster (galaxias) em um anel; gateway no centro.
-  const keys = [...new Set(nodes.filter((n) => n.ck !== "__gw").map((n) => n.ck))];
-  const Rx = GV.W * 0.33, Ry = GV.H * 0.36;
-  GV.clusters = { __gw: { x: GV.W / 2, y: GV.H / 2 } };
-  keys.forEach((k, idx) => {
-    const a = -Math.PI / 2 + (idx / Math.max(1, keys.length)) * Math.PI * 2;
-    GV.clusters[k] = { x: GV.W / 2 + Math.cos(a) * Rx, y: GV.H / 2 + Math.sin(a) * Ry };
-  });
-
-  // Marca rotulos "hub": gateway + top servicos por conexoes.
+  // hubs (rótulo sempre visível): gateway + top serviços por conexões
   const svc = nodes.filter((n) => n.kind === "service").sort((a, b) => (b.count || 0) - (a.count || 0));
-  const hubSet = new Set(svc.slice(0, 8).map((n) => n.id));
-  nodes.forEach((n) => { n.hub = n.kind === "gateway" || hubSet.has(n.id); });
-
-  for (let it = 0; it < 320; it++) gvStep();
-  gvFit();
-  gvDraw();
-  gvKick();
-}
-function gvStep() {
-  const n = GV.nodes, REP = 900 * GV.repuls, DAMP = 0.86;
-  for (let i = 0; i < n.length; i++) {
-    const a = n[i];
-    for (let j = i + 1; j < n.length; j++) {
-      const b = n[j];
-      let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy || 1, d = Math.sqrt(d2);
-      const f = REP / d2, ux = dx / d, uy = dy / d;
-      if (a !== GV.drag) { a.vx += ux * f; a.vy += uy * f; }
-      if (b !== GV.drag) { b.vx -= ux * f; b.vy -= uy * f; }
-    }
-  }
-  for (const e of GV.edges) {
-    const a = GV.byId[e.source], b = GV.byId[e.target];
-    if (!a || !b) continue;
-    let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
-    const len = (a.kind === "gateway" || b.kind === "gateway") ? 120 : 62;
-    const f = (d - len) * 0.015, ux = dx / d, uy = dy / d;
-    if (a !== GV.drag) { a.vx += ux * f; a.vy += uy * f; }
-    if (b !== GV.drag) { b.vx -= ux * f; b.vy -= uy * f; }
-  }
-  let energy = 0;
-  for (const a of n) {
-    if (a === GV.drag) continue;
-    const c = GV.clusters[a.ck] || GV.clusters.__gw;
-    const cg = a.kind === "gateway" ? 0.09 : 0.022;
-    a.vx += (c.x - a.x) * cg; a.vy += (c.y - a.y) * cg;
-    a.vx *= DAMP; a.vy *= DAMP; a.x += a.vx; a.y += a.vy;
-    energy += Math.abs(a.vx) + Math.abs(a.vy);
-  }
-  return energy;
+  const hub = new Set(svc.slice(0, 6).map((n) => n.id));
+  nodes.forEach((n) => { n.hub = (n.kind === "gateway" || hub.has(n.id)); });
+  // preserva foco fixado entre atualizações
+  if (GV.fixo) GV.fixo = GV.byId[GV.fixo.id] || null;
+  GV.hover = null;
+  gvLayout(); gvFit(); gvDraw();
 }
 function gvFit() {
   if (!GV.nodes.length) return;
   let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
-  for (const n of GV.nodes) { if (n.x < mnx) mnx = n.x; if (n.y < mny) mny = n.y; if (n.x > mxx) mxx = n.x; if (n.y > mxy) mxy = n.y; }
-  const bw = Math.max(1, mxx - mnx), bh = Math.max(1, mxy - mny), pad = 74;
-  GV.scale = Math.max(0.25, Math.min(1.5, Math.min((GV.W - 2 * pad) / bw, (GV.H - 2 * pad) / bh)));
+  for (const n of GV.nodes) { if (n.bx < mnx) mnx = n.bx; if (n.by < mny) mny = n.by; if (n.bx > mxx) mxx = n.bx; if (n.by > mxy) mxy = n.by; }
+  const bw = Math.max(1, mxx - mnx), bh = Math.max(1, mxy - mny), pad = 96;
+  GV.scale = Math.max(0.3, Math.min(1.4, Math.min((GV.W - 2 * pad) / bw, (GV.H - 2 * pad) / bh)));
   GV.ox = (GV.W - (mnx + mxx) * GV.scale) / 2;
   GV.oy = (GV.H - (mny + mxy) * GV.scale) / 2;
 }
 function gvDraw() {
-  const ctx = GV.ctx;
-  if (!ctx) return;
+  const ctx = GV.ctx; if (!ctx) return;
   ctx.setTransform(GV.dpr, 0, 0, GV.dpr, 0, 0);
-  ctx.clearRect(0, 0, GV.W, GV.H);
-  ctx.fillStyle = "#05070e"; ctx.fillRect(0, 0, GV.W, GV.H);
-  // estrelas
+  // fundo com vinheta radial
+  const g = ctx.createRadialGradient(GV.W / 2, GV.H * 0.42, 60, GV.W / 2, GV.H * 0.42, Math.max(GV.W, GV.H) * 0.75);
+  g.addColorStop(0, "#0c1524"); g.addColorStop(1, "#060910");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, GV.W, GV.H);
   ctx.fillStyle = "#cfe0f5";
-  for (const st of GV.stars) { ctx.globalAlpha = st.a; ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, 6.283); ctx.fill(); }
+  for (const s of GV.stars) { ctx.globalAlpha = s.a; ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.283); ctx.fill(); }
   ctx.globalAlpha = 1;
-  const neigh = GV.hover ? (GV.adj[GV.hover.id] || new Set()) : null;
-  // arestas
-  for (const e of GV.edges) {
-    const a = GV.byId[e.source], b = GV.byId[e.target];
-    if (!a || !b) continue;
-    const A = w2s(a), B = w2s(b);
-    const hot = GV.hover && (e.source === GV.hover.id || e.target === GV.hover.id);
-    const warm = a.kind === "gateway" || b.kind === "gateway";
-    ctx.strokeStyle = hot ? "rgba(120,200,255,0.55)" : warm ? `rgba(245,177,59,${GV.linkOp * 0.7})` : `rgba(150,170,200,${GV.linkOp})`;
-    ctx.lineWidth = hot ? 1.4 : 0.7;
-    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+  // auras dos setores de categoria
+  for (const cl of GV.catLabels) {
+    const p = w2s({ bx: cl.cx, by: cl.cy });
+    ctx.beginPath(); ctx.arc(p.x, p.y, cl.Ro * GV.scale + 9, cl.a0, cl.a0 + cl.span);
+    ctx.strokeStyle = cl.cor + "22"; ctx.lineWidth = 26 * GV.scale; ctx.stroke();
   }
-  // nos
-  for (const nd of GV.nodes) {
-    const S = w2s(nd), r = Math.max(2, nd.r * GV.nodeSize * GV.scale);
-    const dim = GV.hover && nd !== GV.hover && !(neigh && neigh.has(nd.id));
-    ctx.globalAlpha = dim ? 0.35 : 1;
-    ctx.shadowColor = nd.color;
-    ctx.shadowBlur = (nd.kind === "service" ? 8 : 16) * GV.glow * Math.min(1.5, GV.scale);
-    ctx.beginPath(); ctx.arc(S.x, S.y, r, 0, 6.283);
-    ctx.fillStyle = nd.color; ctx.fill();
-    ctx.shadowBlur = 0;
-    if (nd.kind !== "service") { ctx.lineWidth = 1.8; ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.stroke(); }
-    if (nd === GV.hover) { ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.beginPath(); ctx.arc(S.x, S.y, r + 3, 0, 6.283); ctx.stroke(); }
+  const f = gvFoco(), neigh = f ? (GV.adj[f.id] || new Set()) : null;
+  const gw = GV.nodes.find((n) => n.kind === "gateway");
+  // repouso: raios fraquíssimos disp→gateway; foco: acende as conexões do nó
+  if (!f && gw) {
+    const G = w2s(gw);
+    for (const n of GV.nodes) {
+      if (n.kind !== "device") continue;
+      const S = w2s(n);
+      ctx.strokeStyle = "rgba(120,140,175,0.07)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(G.x, G.y); ctx.lineTo(S.x, S.y); ctx.stroke();
+    }
+  }
+  if (f) {
+    for (const e of GV.edges) {
+      if (e.source !== f.id && e.target !== f.id) continue;
+      const a = GV.byId[e.source], b = GV.byId[e.target], A = w2s(a), B = w2s(b);
+      const grad = ctx.createLinearGradient(A.x, A.y, B.x, B.y);
+      grad.addColorStop(0, (a.color || "#8ac") + "cc"); grad.addColorStop(1, (b.color || "#8ac") + "cc");
+      ctx.strokeStyle = grad; ctx.lineWidth = 1.5;
+      const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.quadraticCurveTo(mx, my, B.x, B.y); ctx.stroke();
+    }
+  }
+  // nós
+  for (const n of GV.nodes) {
+    const S = w2s(n), r = Math.max(2.4, n.r * GV.nodeSize * GV.scale);
+    const dim = f && n !== f && !(neigh && neigh.has(n.id));
+    ctx.globalAlpha = dim ? 0.22 : 1;
+    ctx.shadowColor = n.color; ctx.shadowBlur = (n.kind === "service" ? 7 : 15) * GV.glow * Math.min(1.4, GV.scale);
+    ctx.beginPath(); ctx.arc(S.x, S.y, r, 0, 6.283); ctx.fillStyle = n.color; ctx.fill(); ctx.shadowBlur = 0;
+    if (n.kind !== "service") { ctx.lineWidth = 1.8; ctx.strokeStyle = "rgba(255,255,255,0.75)"; ctx.stroke(); }
+    if (n === f) { ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.beginPath(); ctx.arc(S.x, S.y, r + 4, 0, 6.283); ctx.stroke(); }
     ctx.globalAlpha = 1;
   }
-  // rotulos (so hubs, gateway, dispositivos com zoom, e o hover)
-  ctx.textAlign = "center"; ctx.textBaseline = "top";
-  for (const nd of GV.nodes) {
-    const mostrar = nd === GV.hover || nd.hub || (nd.kind === "device" && GV.scale > 1.35);
+  // rótulos de grupo de dispositivos
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const l of GV.devLabels) {
+    const p = w2s({ bx: l.x, by: l.y });
+    ctx.font = "700 10px " + "var(--mono), monospace"; ctx.fillStyle = l.cor + "cc";
+    ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 4; ctx.fillText(l.txt, p.x, p.y); ctx.shadowBlur = 0;
+  }
+  // rótulos de categoria
+  for (const cl of GV.catLabels) {
+    const p = w2s({ bx: cl.x, by: cl.y });
+    ctx.font = "700 10px monospace"; ctx.fillStyle = cl.cor + "dd";
+    ctx.shadowColor = "rgba(0,0,0,0.85)"; ctx.shadowBlur = 4; ctx.fillText(cl.txt, p.x, p.y); ctx.shadowBlur = 0;
+  }
+  // rótulos de nós: dispositivos = radiais rotacionados; serviços/gateway = horizontais
+  for (const n of GV.nodes) {
+    const mostrar = n === f || n.hub || n.kind === "device" || n.kind === "gateway";
     if (!mostrar) continue;
-    const S = w2s(nd), r = Math.max(2, nd.r * GV.nodeSize * GV.scale);
-    const fs = nd.kind === "gateway" ? 13 : nd.kind === "device" ? 12 : 11;
-    ctx.font = (nd.hub || nd === GV.hover ? "600 " : "") + fs + "px system-ui, sans-serif";
-    const lab = nd.label.length > 24 ? nd.label.slice(0, 22) + "…" : nd.label;
-    ctx.shadowColor = "rgba(0,0,0,0.9)"; ctx.shadowBlur = 4;
-    ctx.fillStyle = nd.kind === "device" ? "#eaf1f8" : "rgba(210,222,238,0.92)";
-    ctx.fillText(lab, S.x, S.y + r + 4);
-    ctx.shadowBlur = 0;
+    const dim = f && n !== f && !(neigh && neigh.has(n.id));
+    if (dim && n.kind === "service") continue;
+    const S = w2s(n), r = Math.max(2.4, n.r * GV.nodeSize * GV.scale);
+    const lab = (n.label || "").length > 24 ? n.label.slice(0, 22) + "…" : (n.label || "");
+    ctx.globalAlpha = dim ? 0.4 : 1;
+    ctx.shadowColor = "rgba(0,0,0,0.92)"; ctx.shadowBlur = 4;
+    if (n.kind === "device") {
+      const a = n.ang, flip = Math.cos(a) < 0;
+      ctx.save(); ctx.translate(S.x, S.y); ctx.rotate(flip ? a + Math.PI : a);
+      ctx.font = (n === f ? "600 " : "") + "11px system-ui, sans-serif";
+      ctx.textAlign = flip ? "right" : "left"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "#eaf1f8"; ctx.fillText(lab, (flip ? -1 : 1) * (r + 7), 0);
+      ctx.restore();
+    } else {
+      const fs = n.kind === "gateway" ? 12 : 10.5;
+      ctx.font = (n.hub || n === f ? "600 " : "") + fs + "px system-ui, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillStyle = "rgba(210,222,238,0.92)"; ctx.fillText(lab, S.x, S.y + r + 4);
+    }
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
   }
 }
-function gvLoop() {
-  if (!GV.started) return;
-  const energy = gvStep();
-  gvDraw();
-  if (energy < 0.5 && !GV.drag && !GV.pan) GV.idle = (GV.idle || 0) + 1; else GV.idle = 0;
-  if (GV.idle > 40) { GV.started = false; return; }
-  requestAnimationFrame(gvLoop);
-}
-function gvKick() { if (!GV.started) { GV.started = true; GV.idle = 0; requestAnimationFrame(gvLoop); } }
 function gvHit(px, py) {
   for (let i = GV.nodes.length - 1; i >= 0; i--) {
-    const nd = GV.nodes[i], S = w2s(nd);
-    if (Math.hypot(S.x - px, S.y - py) <= Math.max(6, nd.r * GV.nodeSize * GV.scale) + 4) return nd;
+    const n = GV.nodes[i], S = w2s(n);
+    if (Math.hypot(S.x - px, S.y - py) <= Math.max(7, n.r * GV.nodeSize * GV.scale) + 4) return n;
   }
   return null;
 }
@@ -334,29 +389,31 @@ function gvLocal(ev) { const r = GV.canvas.getBoundingClientRect(); return { x: 
 function gvWheel(ev) {
   ev.preventDefault();
   const p = gvLocal(ev), before = s2w(p.x, p.y);
-  GV.scale = Math.max(0.25, Math.min(3.5, GV.scale * (ev.deltaY < 0 ? 1.12 : 0.9)));
+  GV.scale = Math.max(0.3, Math.min(3.5, GV.scale * (ev.deltaY < 0 ? 1.12 : 0.9)));
   GV.ox = p.x - before.x * GV.scale; GV.oy = p.y - before.y * GV.scale;
-  gvKick(); gvDraw();
+  gvDraw();
 }
 function gvDown(ev) {
   const p = gvLocal(ev), hit = gvHit(p.x, p.y);
   GV.moved = false;
-  if (hit) GV.drag = hit; else GV.pan = { x: p.x, y: p.y, ox: GV.ox, oy: GV.oy };
-  gvKick();
+  if (hit) GV.press = hit; else GV.pan = { x: p.x, y: p.y, ox: GV.ox, oy: GV.oy };
 }
 function gvMove(ev) {
   if (!GV.canvas) return;
   const p = gvLocal(ev);
-  if (GV.drag) { const w = s2w(p.x, p.y); GV.drag.x = w.x; GV.drag.y = w.y; GV.drag.vx = 0; GV.drag.vy = 0; GV.moved = true; gvKick(); }
-  else if (GV.pan) { GV.ox = GV.pan.ox + (p.x - GV.pan.x); GV.oy = GV.pan.oy + (p.y - GV.pan.y); GV.moved = true; gvDraw(); }
+  if (GV.pan) { GV.ox = GV.pan.ox + (p.x - GV.pan.x); GV.oy = GV.pan.oy + (p.y - GV.pan.y); GV.moved = true; gvDraw(); }
   else { const h = gvHit(p.x, p.y); if (h !== GV.hover) { GV.hover = h; GV.canvas.style.cursor = h ? "pointer" : "grab"; gvDraw(); } }
 }
 function gvUp() {
-  if (GV.drag && !GV.moved) gvInspect(GV.drag);
-  else if (GV.pan && !GV.moved) { const inf = $("#grafo-info"); if (inf) inf.classList.add("oculto"); }
-  GV.drag = null; GV.pan = null;
+  if (GV.press && !GV.moved) {
+    // clique num dispositivo abre o painel completo; num serviço/gateway, o card do grafo
+    if (GV.press.kind === "device") { abrirDetalhe(GV.press.id); }
+    else { GV.fixo = (GV.fixo === GV.press) ? null : GV.press; mostrarNo(GV.fixo); gvDraw(); }
+  } else if (GV.pan && !GV.moved) {
+    GV.fixo = null; const inf = $("#grafo-info"); if (inf) inf.classList.add("oculto"); gvDraw();
+  }
+  GV.press = null; GV.pan = null;
 }
-function gvInspect(n) { if (n.kind === "device") abrirDetalhe(n.id); else mostrarNo(n); }
 
 async function carregarGrafo() {
   try {
@@ -367,20 +424,22 @@ async function carregarGrafo() {
 }
 
 function mostrarNo(n) {
-  const info = $("#grafo-info"), m = n.meta || {};
+  const info = $("#grafo-info");
+  if (!n) { info.classList.add("oculto"); return; }
+  const m = n.meta || {};
   let corpo = "";
   if (n.kind === "service") {
-    corpo = `<div class="gi-linha"><span class="chip">${esc(m.categoria || "")}</span> <strong>${m.conexoes || 0}</strong> conexões</div>
+    corpo = `<div class="gi-linha"><span class="chip" style="color:${n.color};border-color:${n.color}66">${esc(m.categoria || "")}</span> <strong>${m.conexoes || 0}</strong> conexões</div>
       <div class="gi-sec mono">hosts reais</div><div class="gi-hosts mono">${(m.hosts || []).map(esc).join("<br>") || "—"}</div>
-      <div class="gi-sec mono">dispositivos</div><div class="mono">${(m.dispositivos || []).map(esc).join(", ") || "—"}</div>`;
+      <div class="gi-sec mono">quem acessa</div><div class="mono">${(m.dispositivos || []).map(esc).join(", ") || "—"}</div>`;
   } else if (n.kind === "gateway") {
     corpo = `<div class="gi-linha">Roteador / rede local — ${m.dispositivos || 0} dispositivos.</div>
-      <div class="gi-sec mono">dica</div><div class="mono">scroll = zoom · arraste os nós · clique num dispositivo pra ver detalhes.</div>`;
+      <div class="gi-sec mono">dica</div><div class="mono">passe o mouse num nó pra ver só as conexões dele · clique num dispositivo pra abrir os detalhes.</div>`;
   }
   info.innerHTML = `<div class="gi-cab"><span class="gi-nome">${esc(n.label)}</span><button class="btn-fechar" id="gi-fechar" title="Fechar">✕</button></div>${corpo}`;
   info.classList.remove("oculto");
   const f = $("#gi-fechar");
-  if (f) f.addEventListener("click", () => info.classList.add("oculto"));
+  if (f) f.addEventListener("click", () => { info.classList.add("oculto"); GV.fixo = null; gvDraw(); });
 }
 
 // ----------------------- resumo (chart + tops) -----------------------

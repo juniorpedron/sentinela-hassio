@@ -58,7 +58,7 @@
       <div class="card-cab">
         <h3>Mapa da rede — dispositivos e conexões</h3>
         <div class="grafo-acoes">
-          <span class="grafo-hint">● dispositivos &nbsp; ● serviços — clique num nó pra ver mais</span>
+          <span class="grafo-hint">passe o mouse num nó pra ver só as conexões dele · clique num aparelho pra abrir</span>
           <button id="grafo-atualizar" class="btn-mini">atualizar</button>
         </div>
       </div>
@@ -66,10 +66,9 @@
         <canvas id="grafo-canvas" class="grafo-canvas"></canvas>
         <div class="grafo-ctrl" id="grafo-ctrl">
           <div class="gc-tit mono">ajustes</div>
-          <label class="gc-row"><span>brilho</span><input type="range" id="gc-glow" min="0" max="1.4" step="0.05" value="0.7" /></label>
-          <label class="gc-row"><span>tamanho</span><input type="range" id="gc-size" min="0.5" max="1.8" step="0.05" value="1" /></label>
-          <label class="gc-row"><span>conexões</span><input type="range" id="gc-link" min="0" max="0.6" step="0.02" value="0.26" /></label>
-          <label class="gc-row"><span>repulsão</span><input type="range" id="gc-rep" min="0.4" max="2" step="0.1" value="1" /></label>
+          <label class="gc-row"><span>brilho</span><input type="range" id="gc-glow" min="0" max="1.4" step="0.05" value="0.8" /></label>
+          <label class="gc-row"><span>tamanho</span><input type="range" id="gc-size" min="0.6" max="1.8" step="0.05" value="1" /></label>
+          <label class="gc-row"><span>órbitas</span><input type="range" id="gc-orb" min="0.7" max="1.3" step="0.05" value="1" /></label>
           <button class="btn-mini" id="gc-reset">recentralizar</button>
         </div>
         <aside id="grafo-info" class="grafo-info oculto"></aside>
