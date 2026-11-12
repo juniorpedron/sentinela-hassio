@@ -69,6 +69,7 @@ _MAX_CONNS = 20000        # conexoes abertas acompanhadas ao mesmo tempo
 _CONN_TTL = 6 * 3600      # desiste de uma conexao sem FIN depois disso
 _MAX_NAMES = 50000        # mapa IP -> nome (respostas DNS)
 _DEDUPE_TTL = 3600        # mesma (dispositivo, destino) so vira 1 registro por hora
+_MAX_BPS = 125_000_000    # 1 Gbit/s: teto fisico para validar o volume de uma conexao
 
 
 def _fmt_mac(m: Optional[str]) -> Optional[str]:
@@ -405,22 +406,31 @@ class Rastreador:
 
         # ---- fim da conexao: mede o volume pelos numeros de sequencia ----
         if flags & (_FIN | _RST) and c is not None:
-            if saindo and c["up"] is None and c["isn_c"] is not None:
+            # Um RST com seq 0 e resposta a segmento sem ACK: o numero nao pertence
+            # a conexao e geraria um volume falso de ate 2 GB. So o FIN, ou um RST
+            # com seq real, serve para medir.
+            mede = bool(flags & _FIN) or t.seq != 0
+            if mede and saindo and c["up"] is None and c["isn_c"] is not None:
                 c["up"] = (t.seq - c["isn_c"] - 1) & 0xFFFFFFFF
-            elif not saindo and c["down"] is None and c["isn_s"] is not None:
+            elif mede and not saindo and c["down"] is None and c["isn_s"] is not None:
                 c["down"] = (t.seq - c["isn_s"] - 1) & 0xFFFFFFFF
             if flags & _RST or (c["up"] is not None and c["down"] is not None):
-                self._fecha(chave, c)
+                self._fecha(chave, c, agora)
 
-    def _fecha(self, chave, c) -> None:
+    def _fecha(self, chave, c, agora: Optional[float] = None) -> None:
         self.conns.pop(chave, None)
         up = c["up"] or 0
         down = c["down"] or 0
-        # valores absurdos (RST com seq lixo / volta do contador) sao descartados
-        if up > 0x7FFFFFFF:
+        # Valores impossiveis sao descartados: acima de 2 GB (seq lixo / volta do
+        # contador) ou acima do que a duracao da conexao permitiria a 1 Gbit/s.
+        dur = max(1.0, (agora if agora is not None else time.monotonic()) - c["t"])
+        teto = min(0x7FFFFFFF, int(dur * _MAX_BPS) + 1_000_000)
+        if up > teto:
             up = 0
-        if down > 0x7FFFFFFF:
+            self.stats["volume_descartado"] = self.stats.get("volume_descartado", 0) + 1
+        if down > teto:
             down = 0
+            self.stats["volume_descartado"] = self.stats.get("volume_descartado", 0) + 1
         self.stats["tcp_fechadas"] += 1
         host = c.get("host") or self._nome(chave[2]) or chave[2]
         self._soma_uso(chave[0], host, "tcp", up, down, 1)
@@ -442,7 +452,7 @@ class Rastreador:
         for k in velhas:
             c = self.conns.get(k)
             if c is not None:
-                self._fecha(k, c)
+                self._fecha(k, c, agora)
         return len(velhas)
 
 

@@ -132,6 +132,10 @@ _RULES: list[tuple[str, tuple[str, str]]] = [
     ("pool.ntp", ("Relogio (NTP)", "Sistema")),
     ("ntp.br", ("Relogio (NTP)", "Sistema")),
     # --- IoT / casa inteligente ---
+    ("imou", ("Camera Intelbras/Imou (nuvem)", "IoT")),
+    ("mibo", ("Camera Intelbras Mibo (nuvem)", "IoT")),
+    ("lifeaiot", ("Tuya (casa inteligente)", "IoT")),
+    ("iotbing", ("Tuya (casa inteligente)", "IoT")),
     ("crealitycloud", ("Creality (impressora 3D)", "IoT")),
     ("creality", ("Creality (impressora 3D)", "IoT")),
     ("tuya", ("Tuya (casa inteligente)", "IoT")),
