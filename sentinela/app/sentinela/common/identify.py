@@ -246,3 +246,138 @@ def enrich(dev: dict, lan_net: Optional[ipaddress._BaseNetwork] = None) -> dict:
     out["internal"] = is_internal(dev, lan_net)
     out["named"] = bool(dev.get("label") or meta.get("dhcp_name") or clean_hostname(dev.get("hostname")))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Um aparelho, varios MACs
+# ---------------------------------------------------------------------------
+# Celulares usam "MAC privado", que pode mudar (por rede, por tempo, ao esquecer
+# a rede). Cada MAC novo vira um registro novo no banco. Aqui juntamos os
+# registros que sao o MESMO aparelho, sem apagar nada:
+#   1. vinculo manual: meta.alias_of = id do registro principal;
+#   2. automatico: mesmo nome DHCP (nao generico), com pelo menos um MAC
+#      privado, e sem os dois terem ficado ativos ao mesmo tempo.
+
+# Nomes de fabrica: dois aparelhos diferentes costumam ter o mesmo.
+_NOMES_GENERICOS = {
+    "iphone", "ipad", "ipod", "macbook", "macbook-air", "macbook-pro", "imac", "watch",
+    "apple-watch", "android", "galaxy", "localhost", "unknown", "espressif", "wlan0",
+    "host", "device", "phone", "celular", "tablet", "tv", "smart-tv", "desktop", "laptop", "pc",
+}
+
+
+def _dt(v):
+    from datetime import datetime, timezone
+
+    try:
+        d = datetime.fromisoformat(str(v))
+    except (ValueError, TypeError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def _sobrepoe(a: dict, b: dict, folga_h: float = 24.0) -> bool:
+    """Os dois registros ficaram ativos ao mesmo tempo (por mais que a folga)?"""
+    a1, a2, b1, b2 = _dt(a.get("first_seen")), _dt(a.get("last_seen")), _dt(b.get("first_seen")), _dt(b.get("last_seen"))
+    if None in (a1, a2, b1, b2):
+        return False
+    ini, fim = max(a1, b1), min(a2, b2)
+    return (fim - ini).total_seconds() > folga_h * 3600
+
+
+def chave_nome(dev: dict) -> Optional[str]:
+    """Nome DHCP normalizado, se servir para reconhecer o aparelho; senao None."""
+    nome = (parse_meta(dev.get("meta")).get("dhcp_name") or "").strip().lower()
+    if len(nome) < 4 or nome in _NOMES_GENERICOS or is_ip_like(nome):
+        return None
+    return nome
+
+
+def agrupar(devs: list[dict]) -> tuple[list[dict], dict[str, str]]:
+    """Junta registros do mesmo aparelho.
+
+    Devolve (lista de aparelhos, mapa id_do_registro -> id_do_aparelho). Cada
+    aparelho e uma copia do registro principal com os dados de rede (mac, ip,
+    ultimo visto) do registro visto por ultimo, mais ``members``.
+    """
+    por_id = {d["id"]: d for d in devs}
+    pai: dict[str, str] = {d["id"]: d["id"] for d in devs}
+
+    def raiz(i: str) -> str:
+        visto = set()
+        while pai.get(i, i) != i and i not in visto:
+            visto.add(i)
+            i = pai[i]
+        return i
+
+    # 1) vinculo manual
+    for d in devs:
+        alvo = parse_meta(d.get("meta")).get("alias_of")
+        if alvo and alvo in por_id and alvo != d["id"] and raiz(alvo) != d["id"]:
+            pai[d["id"]] = alvo
+
+    # 2) automatico pelo nome DHCP
+    por_nome: dict[str, list[dict]] = {}
+    for d in devs:
+        k = chave_nome(d)
+        if k:
+            por_nome.setdefault(k, []).append(d)
+    for membros in por_nome.values():
+        if len(membros) < 2 or not any(is_private_mac(m.get("mac")) for m in membros):
+            continue
+        membros.sort(key=lambda m: str(m.get("first_seen") or ""))
+        base = membros[0]
+        aceitos = [base]
+        for m in membros[1:]:
+            if any(_sobrepoe(m, a) for a in aceitos):
+                continue                      # ativos ao mesmo tempo: aparelhos distintos
+            aceitos.append(m)
+            if raiz(m["id"]) != raiz(base["id"]):
+                pai[raiz(m["id"])] = raiz(base["id"])
+
+    grupos: dict[str, list[dict]] = {}
+    for d in devs:
+        grupos.setdefault(raiz(d["id"]), []).append(d)
+
+    saida: list[dict] = []
+    mapa: dict[str, str] = {}
+    for _r, membros in grupos.items():
+        membros.sort(key=lambda m: str(m.get("last_seen") or ""), reverse=True)
+        recente = membros[0]
+        # principal: quem tem rotulo (o mais antigo deles) > alvo do vinculo manual > o mais antigo.
+        # Assim nao importa em que sentido o usuario vinculou: o aparelho "conhecido" manda.
+        rotulados = sorted((m for m in membros if m.get("label")), key=lambda m: str(m.get("first_seen") or ""))
+        if rotulados:
+            principal = rotulados[0]
+        elif any(parse_meta(m.get("meta")).get("alias_of") for m in membros):
+            principal = por_id[_r]
+        else:
+            principal = min(membros, key=lambda m: str(m.get("first_seen") or ""))
+        ap = dict(principal)
+        meta: dict = {}
+        for m in reversed(membros):            # o mais recente sobrescreve
+            meta.update({k: v for k, v in parse_meta(m.get("meta")).items() if v and k != "alias_of"})
+        ap["meta"] = meta
+        for campo in ("mac", "ip4", "ip6", "last_seen"):
+            ap[campo] = recente.get(campo) or principal.get(campo)
+        ap["mac_vendor"] = recente.get("mac_vendor") or principal.get("mac_vendor")
+        ap["hostname"] = clean_hostname(recente.get("hostname")) or clean_hostname(principal.get("hostname")) or recente.get("hostname")
+        ap["first_seen"] = min(str(m.get("first_seen") or "") for m in membros) or principal.get("first_seen")
+        if not ap.get("label") and rotulados:
+            ap["label"] = rotulados[0]["label"]
+        # confianca do aparelho: quarentena em qualquer MAC prevalece; senao, confiavel se algum for.
+        if any(m.get("trust_state") == "quarantine" for m in membros):
+            ap["trust_state"] = "quarantine"
+        elif any(m.get("trust_state") == "trusted" for m in membros):
+            ap["trust_state"] = "trusted"
+        ap["members"] = [
+            {"id": m["id"], "mac": m.get("mac"), "ip4": m.get("ip4"), "first_seen": m.get("first_seen"),
+             "last_seen": m.get("last_seen"), "manual": bool(parse_meta(m.get("meta")).get("alias_of")),
+             "principal": m["id"] == principal["id"]}
+            for m in membros
+        ]
+        for m in membros:
+            mapa[m["id"]] = principal["id"]
+        saida.append(ap)
+    saida.sort(key=lambda a: str(a.get("last_seen") or ""), reverse=True)
+    return saida, mapa

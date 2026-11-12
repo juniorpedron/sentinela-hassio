@@ -197,6 +197,10 @@ class Storage:
         """Soma volume por (hora, dispositivo, host, proto)."""
         return None
 
+    async def set_device_meta_key(self, device_id: str, key: str, value: Any) -> None:
+        """Grava (ou apaga, se ``value`` for None) uma chave do JSON ``device.meta``."""
+        return None
+
     async def usage_by_device(self, hours: int = 24) -> list[dict]:
         return []
 
@@ -875,6 +879,29 @@ class SqliteStorage(Storage):
             await self._db.execute(
                 "UPDATE device SET meta = ?, hostname = ? WHERE id = ?",
                 (_json.dumps(meta, ensure_ascii=False), hostname, device_id),
+            )
+            await self._db.commit()
+
+    async def set_device_meta_key(self, device_id: str, key: str, value: Any) -> None:
+        import json as _json
+
+        async with self._lock:
+            row = await self._fetchone("SELECT meta FROM device WHERE id = ?", (device_id,))
+            if row is None:
+                return
+            try:
+                meta = _json.loads(row.get("meta") or "{}")
+                if not isinstance(meta, dict):
+                    meta = {}
+            except ValueError:
+                meta = {}
+            if value is None:
+                meta.pop(key, None)
+            else:
+                meta[key] = value
+            await self._db.execute(
+                "UPDATE device SET meta = ? WHERE id = ?",
+                (_json.dumps(meta, ensure_ascii=False), device_id),
             )
             await self._db.commit()
 

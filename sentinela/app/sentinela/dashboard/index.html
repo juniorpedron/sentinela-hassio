@@ -19,6 +19,14 @@
       <span id="badge-ro" class="badge-ro oculto" title="Somente visualização — rede não-confiável">● SOMENTE LEITURA</span>
     </div>
 
+    <nav class="nav-views" id="nav-views" aria-label="Seções do painel">
+      <button class="nav-v ativa" data-view="geral">Visão geral</button>
+      <button class="nav-v" data-view="dispositivos">Dispositivos <b id="nav-n-dev"></b></button>
+      <button class="nav-v" data-view="trafego">Tráfego</button>
+      <button class="nav-v" data-view="mapa">Mapa</button>
+      <button class="nav-v" data-view="eventos">Ao vivo</button>
+    </nav>
+
     <div class="topo-controles">
       <button id="btn-sniffer" class="btn-sniffer off" title="Liga/desliga a captura de pacotes (sniffer L2)">
         ○ Sniffer
@@ -28,7 +36,7 @@
   </header>
 
   <!-- ============ NÍVEL DA REDE (assinatura) ============ -->
-  <section class="nivel-rede" id="nivel-rede">
+  <section class="nivel-rede" id="nivel-rede" data-views="geral dispositivos">
     <div class="nr-status">
       <span class="nr-lamp"></span>
       <div>
@@ -46,7 +54,15 @@
   </section>
 
   <!-- Estado da captura (o que o sensor esta de fato enxergando) -->
-  <div id="captura-bar" class="captura-bar oculto"></div>
+  <div id="captura-bar" class="captura-bar oculto" data-views="geral trafego"></div>
+
+  <!-- Novos na rede (primeira vez nas ultimas 48 h) -->
+  <section class="novos-secao oculto" id="novos-secao" data-views="geral">
+    <div class="card">
+      <div class="card-cab"><h3>Novos na rede — últimas 48 h</h3><span class="grafo-hint">primeira vez que este MAC aparece · clique para identificar</span></div>
+      <div class="novos-lista" id="novos-lista"></div>
+    </div>
+  </section>
 
   <!-- Aviso de LIMITE HONESTO (mostrado apenas no modo PC) -->
   <div id="aviso-limite" class="aviso-limite oculto">
@@ -57,7 +73,7 @@
   </div>
 
   <!-- ================= MAPA DA REDE ================= -->
-  <section class="grafo-secao">
+  <section class="grafo-secao" data-views="mapa">
     <div class="card">
       <div class="card-cab">
         <h3>Mapa da rede — dispositivos e conexões</h3>
@@ -87,7 +103,7 @@
   </section>
 
   <!-- ================= RESUMO (grafico + tops) ================= -->
-  <section class="resumo">
+  <section class="resumo" data-views="geral">
     <div class="card card-chart">
       <div class="card-cab">
         <h3>Atividade — 24h</h3>
@@ -106,7 +122,7 @@
   </section>
 
   <!-- Barra de exportacao -->
-  <div class="toolbar">
+  <div class="toolbar" data-views="trafego dispositivos">
     <span class="toolbar-rot mono">exportar csv:</span>
     <a href="api/export?kind=devices">dispositivos</a>
     <a href="api/export?kind=flows&limit=5000">conexões</a>
@@ -115,7 +131,7 @@
   </div>
 
   <!-- ================= TRÁFEGO IDENTIFICADO ================= -->
-  <section class="trafego-secao">
+  <section class="trafego-secao" data-views="trafego">
     <div class="card" id="painel-trafego">
       <div class="card-cab">
         <div class="abas" id="trafego-abas">
@@ -134,7 +150,7 @@
 
   <!-- ================= GRID PRINCIPAL ================= -->
   <main class="grid">
-    <section class="painel" id="painel-devices">
+    <section class="painel" id="painel-devices" data-views="dispositivos">
       <div class="painel-cabecalho">
         <h2>Dispositivos</h2>
         <input type="search" id="busca" class="busca"
@@ -151,7 +167,7 @@
       </div>
     </section>
 
-    <section class="painel" id="painel-feed">
+    <section class="painel" id="painel-feed" data-views="eventos geral">
       <div class="painel-cabecalho">
         <h2>Feed ao vivo</h2>
         <div class="feed-filtros" id="feed-filtros" title="Filtrar tipos no feed">

@@ -405,3 +405,50 @@ table.trafego .num { text-align: right; white-space: nowrap; font-variant-numeri
 
 .feed-quem { color: var(--txt); font-weight: 700; font-family: var(--sans); }
 .top-label .mudo { margin-left: 6px; font-size: 10.5px; }
+
+/* ================= v0.3.1 — navegação, grupos, novos, vínculo de MACs ================= */
+.fora-da-view { display: none !important; }
+.topo { position: sticky; top: 0; z-index: 40; background: rgba(8, 11, 18, 0.92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--linha); }
+.nav-views { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; justify-content: center; }
+.nav-v { background: transparent; color: var(--txt-fraco); border: 1px solid transparent; border-radius: 999px; padding: 7px 16px;
+  font-family: var(--sans); font-size: 13px; font-weight: 600; cursor: pointer; }
+.nav-v:hover { color: var(--txt); background: var(--bg-3); }
+.nav-v.ativa { color: var(--void); background: var(--teal); }
+.nav-v b { font-family: var(--mono); font-size: 11px; margin-left: 4px; opacity: .8; }
+
+/* cada aba usa a largura toda */
+body[data-view="dispositivos"] .grid, body[data-view="eventos"] .grid { grid-template-columns: 1fr; }
+body[data-view="geral"] .grid { grid-template-columns: 1fr; }
+body[data-view="geral"] #painel-feed { min-height: 0; max-height: 46vh; }
+body[data-view="trafego"] .trafego-wrap { max-height: calc(100vh - 250px); }
+body[data-view="mapa"] .grafo-canvas { height: calc(100vh - 210px); min-height: 480px; }
+body[data-view="dispositivos"] .lista-devices { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+
+/* lista agrupada por tipo */
+.lista-devices .grupo-rot { grid-column: 1 / -1; padding: 14px 4px 2px; font-size: 11px; color: var(--txt-fraco);
+  border-bottom: 1px solid var(--linha); margin-bottom: 2px; }
+.lista-devices .grupo-rot:first-child { padding-top: 4px; }
+.grupo-rot b { color: var(--teal); margin-left: 6px; }
+.device-selos { display: flex; gap: 5px; align-items: center; flex-shrink: 0; }
+.chip-novo { background: rgba(45, 212, 191, 0.16); color: var(--teal); border-color: var(--teal-esc); }
+.chip-macs { background: rgba(167, 139, 250, 0.14); color: #a78bfa; border-color: rgba(167, 139, 250, 0.45); }
+
+/* novos na rede */
+.novos-secao { padding: 16px 24px 0; }
+.novos-lista { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; }
+.novo-item { display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer; background: var(--bg);
+  border: 1px solid var(--linha-2); border-left: 3px solid var(--amb); border-radius: 10px; padding: 8px 12px; color: var(--txt); min-width: 230px; }
+.novo-item.dev-trusted { border-left-color: var(--ok); }
+.novo-item:hover { background: var(--bg-3); }
+.novo-ic { font-size: 20px; }
+.novo-txt { display: flex; flex-direction: column; min-width: 0; }
+.novo-txt b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.novo-txt small { font-size: 10.5px; color: var(--txt-fraco); }
+
+/* vínculo de MACs no detalhe */
+.macs-lista { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.mac-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px;
+  background: var(--bg); border: 1px solid var(--linha); border-radius: 8px; font-size: 12px; flex-wrap: wrap; }
+.sel-larga { max-width: none; flex: 1; min-width: 0; padding: 8px 10px; font-size: 12px; }
+.vinculo .acao-label { display: flex; gap: 8px; }
+@media (max-width: 900px) { .nav-views { order: 3; flex-basis: 100%; justify-content: flex-start; } }

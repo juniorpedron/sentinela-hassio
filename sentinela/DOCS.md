@@ -4,7 +4,7 @@ Monitor da rede doméstica que roda 24/7 no mesmo Pi do Home Assistant, dentro d
 UI autenticada do HA (Ingress). Lê uma **cópia** do tráfego pela porta espelhada
 do switch (SPAN) e mostra quem está na rede e o que cada aparelho acessa.
 
-## O que este build faz (v0.3)
+## O que este build faz (v0.3.1)
 
 **Inventário e identificação**
 - Descoberta por ARP, ping, mDNS e SSDP; fabricante pelo MAC.
@@ -13,6 +13,13 @@ do switch (SPAN) e mostra quem está na rede e o que cada aparelho acessa.
 - Tipo do aparelho (celular, computador, TV, videogame, casa inteligente…) por
   heurística; o painel mostra de onde veio o palpite.
 - MAC privado (aleatório) sinalizado; rede interna do HA fica fora da lista.
+
+**Um aparelho, vários MACs**
+- O rastreio é por MAC. Celulares usam MAC privado, que pode mudar; cada MAC novo
+  viraria um aparelho novo. O Sentinela junta os registros do mesmo aparelho:
+  automaticamente quando o nome DHCP é o mesmo (e não é genérico, como "iPhone"),
+  ou manualmente pelo painel ("é o mesmo aparelho que…"). Nada é apagado e o
+  vínculo pode ser desfeito.
 
 **Tráfego por dispositivo (só metadados)**
 - **DNS**: nome consultado e tipo (A, AAAA, HTTPS…).

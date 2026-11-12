@@ -45,6 +45,12 @@ class SnifferToggle(BaseModel):
     enabled: bool
 
 
+class AliasBody(BaseModel):
+    """Corpo do POST /api/devices/{id}/alias: id do aparelho principal, ou null para desvincular."""
+
+    primary_id: str | None = None
+
+
 class InterceptToggle(BaseModel):
     """Corpo do POST /api/intercept/{device_id}."""
 
@@ -100,28 +106,59 @@ def create_app(storage, controls=None) -> FastAPI:
             visto = visto.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc) - visto <= timedelta(hours=horas)
 
+    async def _grupos() -> tuple[list[dict], dict[str, str]]:
+        """Aparelhos (registros do mesmo aparelho ja unidos) + mapa registro -> aparelho."""
+        return identify.agrupar(await app.state.storage.list_devices())
+
+    async def _membros(device_id: str) -> list[str]:
+        """Ids de todos os registros (MACs) do aparelho a que ``device_id`` pertence."""
+        aparelhos, mapa = await _grupos()
+        raiz = mapa.get(device_id, device_id)
+        for a in aparelhos:
+            if a["id"] == raiz:
+                return [m["id"] for m in a["members"]]
+        return [device_id]
+
     async def _devices(hours: int = 24, internal: bool = False) -> list[dict]:
-        """Dispositivos com nome/tipo derivados + atividade e volume na janela."""
+        """Aparelhos com nome/tipo derivados + atividade e volume na janela."""
         st = app.state.storage
-        brutos = await st.list_devices()
+        aparelhos, _mapa = await _grupos()
         act = await st.activity_by_device(hours)
         uso = {u["device_id"]: u for u in await st.usage_by_device(hours)}
+        agora = datetime.now(timezone.utc)
         out = []
-        for d in brutos:
+        for d in aparelhos:
             e = identify.enrich(d, lan_net)
             if e["internal"] and not internal:
                 continue
-            a = act.get(d["id"], {})
-            u = uso.get(d["id"], {})
-            e["flows"] = a.get("flows", 0)
-            e["dns"] = a.get("dns", 0)
-            e["bytes_up"] = u.get("bytes_up") or 0
-            e["bytes_down"] = u.get("bytes_down") or 0
-            e["conns"] = u.get("conns") or 0
+            ids = [m["id"] for m in d["members"]]
+            e["flows"] = sum(act.get(i, {}).get("flows", 0) for i in ids)
+            e["dns"] = sum(act.get(i, {}).get("dns", 0) for i in ids)
+            e["bytes_up"] = sum((uso.get(i, {}).get("bytes_up") or 0) for i in ids)
+            e["bytes_down"] = sum((uso.get(i, {}).get("bytes_down") or 0) for i in ids)
+            e["conns"] = sum((uso.get(i, {}).get("conns") or 0) for i in ids)
             e["active"] = _ativo(d, hours)
             e["capturado"] = bool(e["flows"] or e["dns"] or e["conns"])
+            e["macs"] = len(ids)
+            try:
+                primeiro = datetime.fromisoformat(str(d.get("first_seen")))
+                if primeiro.tzinfo is None:
+                    primeiro = primeiro.replace(tzinfo=timezone.utc)
+                e["novo"] = agora - primeiro <= timedelta(hours=48)
+            except ValueError:
+                e["novo"] = False
             out.append(e)
         return out
+
+    async def _por_aparelho(consulta, device_id: str | None, limit: int) -> list[dict]:
+        """Roda ``consulta(device_id=, limit=)`` para cada MAC do aparelho e junta por data."""
+        if not device_id:
+            return await consulta(device_id=None, limit=limit)
+        linhas: list[dict] = []
+        for i in await _membros(device_id):
+            linhas.extend(await consulta(device_id=i, limit=limit))
+        linhas.sort(key=lambda r: str(r.get("ts") or ""), reverse=True)
+        return linhas[:limit]
 
     def _servico(host: str | None) -> tuple[str, str]:
         if not host:
@@ -178,22 +215,66 @@ def create_app(storage, controls=None) -> FastAPI:
     @app.get("/api/devices/{device_id}")
     async def device_detail(device_id: str) -> dict:
         """Detalhe de um dispositivo por id (com os campos derivados)."""
-        dev = await app.state.storage.get_device(device_id)
+        if await app.state.storage.get_device(device_id) is None:
+            raise HTTPException(status_code=404, detail="Dispositivo nao encontrado")
+        aparelhos, mapa = await _grupos()
+        raiz = mapa.get(device_id, device_id)
+        for a in aparelhos:
+            if a["id"] == raiz:
+                e = identify.enrich(a, lan_net)
+                e["macs"] = len(a["members"])
+                return e
+        raise HTTPException(status_code=404, detail="Dispositivo nao encontrado")
+
+    @app.post("/api/devices/{device_id}/alias", dependencies=[Depends(_require_token)])
+    async def set_alias(device_id: str, body: AliasBody) -> dict:
+        """Diz que este registro (MAC) e o MESMO aparelho que ``primary_id``.
+
+        ``primary_id`` nulo desfaz o vinculo. Nada e apagado: so o agrupamento muda.
+        """
+        st = app.state.storage
+        dev = await st.get_device(device_id)
         if dev is None:
             raise HTTPException(status_code=404, detail="Dispositivo nao encontrado")
-        return identify.enrich(dev, lan_net)
+        if body.primary_id is None:
+            await st.set_device_meta_key(device_id, "alias_of", None)
+            await st.add_event(device_id=device_id, severity="info", type="device.alias",
+                               title="Vinculo de aparelho desfeito", detail=dev.get("mac"))
+            return {"ok": True, "alias_of": None}
+        _ap, mapa = await _grupos()
+        alvo = mapa.get(body.primary_id)
+        if alvo is None:
+            raise HTTPException(status_code=404, detail="Aparelho principal nao encontrado")
+        if alvo == mapa.get(device_id) and alvo != device_id:
+            return {"ok": True, "alias_of": alvo}
+        if alvo == device_id:
+            raise HTTPException(status_code=422, detail="Um aparelho nao pode ser vinculado a si mesmo")
+        # se este registro era principal de outros, eles passam a apontar para o novo principal
+        for outro, raiz in mapa.items():
+            if raiz == device_id and outro != device_id:
+                await st.set_device_meta_key(outro, "alias_of", alvo)
+        await st.set_device_meta_key(device_id, "alias_of", alvo)
+        principal = await st.get_device(alvo)
+        await st.add_event(
+            device_id=alvo, severity="info", type="device.alias",
+            title="MAC vinculado a um aparelho conhecido",
+            detail=f"{dev.get('mac')} -> {(principal or {}).get('label') or (principal or {}).get('mac')}",
+        )
+        return {"ok": True, "alias_of": alvo}
 
     @app.get("/api/overview")
     async def overview(hours: int = Query(default=24, ge=1, le=720)) -> dict:
         """Resumo da janela: ativos, volume, quem mais usa e o que mais e usado."""
         devs = await _devices(hours=hours)
         nomes = {d["id"]: d for d in devs}
+        _ap, mapa = await _grupos()
         ativos = [d for d in devs if d["active"]]
         top_dev = sorted(devs, key=lambda d: (d["bytes_up"] + d["bytes_down"], d["flows"] + d["dns"]),
                          reverse=True)
         servicos: dict = {}
         for u in await app.state.storage.usage_by_host(hours=hours, limit=2000):
-            if u["device_id"] not in nomes:
+            ap_id = mapa.get(u["device_id"], u["device_id"])
+            if ap_id not in nomes:
                 continue
             nome, cat = _servico(u["host"])
             s = servicos.setdefault(nome, {"name": nome, "category": cat, "bytes_up": 0,
@@ -201,7 +282,7 @@ def create_app(storage, controls=None) -> FastAPI:
             s["bytes_up"] += u["bytes_up"] or 0
             s["bytes_down"] += u["bytes_down"] or 0
             s["conns"] += u["conns"] or 0
-            s["devices"].add(u["device_id"])
+            s["devices"].add(ap_id)
         top_svc = sorted(servicos.values(), key=lambda x: x["bytes_up"] + x["bytes_down"], reverse=True)
         for x in top_svc:
             x["devices"] = len(x["devices"])
@@ -211,6 +292,12 @@ def create_app(storage, controls=None) -> FastAPI:
             "devices_active": len(ativos),
             "unknown_active": sum(1 for d in ativos if (d.get("trust_state") or "unknown") == "unknown"),
             "unnamed_active": sum(1 for d in ativos if not d["named"]),
+            "new_devices": [
+                {"id": d["id"], "name": d["display_name"], "kind": d["kind"], "ip4": d.get("ip4"),
+                 "first_seen": d.get("first_seen"), "trust_state": d.get("trust_state"),
+                 "private_mac": d["private_mac"], "vendor": d.get("mac_vendor")}
+                for d in devs if d["novo"] and d["active"]
+            ],
             "bytes_up": sum(d["bytes_up"] for d in devs),
             "bytes_down": sum(d["bytes_down"] for d in devs),
             "top_devices": [
@@ -231,18 +318,25 @@ def create_app(storage, controls=None) -> FastAPI:
     ) -> list[dict]:
         """Volume por dispositivo x servico (bytes medidos nas conexoes TCP)."""
         nomes = {d["id"]: d for d in await _devices(hours=hours, internal=True)}
+        _ap, mapa = await _grupos()
+        membros = set(await _membros(device_id)) if device_id else None
+        soma: dict = {}
+        for u in await app.state.storage.usage_by_host(hours=hours, limit=5000):
+            if membros is not None and u["device_id"] not in membros:
+                continue
+            did = mapa.get(u["device_id"], u["device_id"])
+            r = soma.setdefault((did, u["host"]), {"bytes_up": 0, "bytes_down": 0, "conns": 0})
+            r["bytes_up"] += u["bytes_up"] or 0
+            r["bytes_down"] += u["bytes_down"] or 0
+            r["conns"] += u["conns"] or 0
         out = []
-        for u in await app.state.storage.usage_by_host(hours=hours, device_id=device_id, limit=limit):
-            did = u.get("device_id") or device_id
+        for (did, host), r in soma.items():
             d = nomes.get(did, {})
-            nome, cat = _servico(u["host"])
-            out.append({
-                "device_id": did, "device": d.get("display_name") or "?", "kind": d.get("kind"),
-                "host": u["host"], "service": nome, "category": cat,
-                "bytes_up": u["bytes_up"] or 0, "bytes_down": u["bytes_down"] or 0,
-                "conns": u["conns"] or 0,
-            })
-        return out
+            nome, cat = _servico(host)
+            out.append({"device_id": did, "device": d.get("display_name") or "?", "kind": d.get("kind"),
+                        "host": host, "service": nome, "category": cat, **r})
+        out.sort(key=lambda x: x["bytes_up"] + x["bytes_down"], reverse=True)
+        return out[:limit]
 
     @app.get("/api/traffic")
     async def traffic(
@@ -251,13 +345,15 @@ def create_app(storage, controls=None) -> FastAPI:
     ) -> list[dict]:
         """Conexoes recentes ja identificadas: quem (dispositivo) acessou o que (servico)."""
         nomes = {d["id"]: d for d in await _devices(internal=True)}
+        _ap, mapa = await _grupos()
         out = []
-        for f in await app.state.storage.recent_flows(device_id=device_id, limit=limit):
-            d = nomes.get(f.get("device_id"), {})
+        for f in await _por_aparelho(app.state.storage.recent_flows, device_id, limit):
+            ap_id = mapa.get(f.get("device_id"), f.get("device_id"))
+            d = nomes.get(ap_id, {})
             host = f.get("sni")
             nome, cat = _servico(host or f.get("dst_ip"))
             out.append({
-                "ts": f.get("ts"), "device_id": f.get("device_id"),
+                "ts": f.get("ts"), "device_id": ap_id,
                 "device": d.get("display_name") or f.get("src_ip") or "?", "kind": d.get("kind"),
                 "service": nome, "category": cat, "host": host, "dst_ip": f.get("dst_ip"),
                 "dst_port": f.get("dst_port"), "proto": f.get("proto"), "app": f.get("app_proto"),
@@ -269,16 +365,16 @@ def create_app(storage, controls=None) -> FastAPI:
         device_id: str | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=1000),
     ) -> list[dict]:
-        """Fluxos recentes, opcionalmente filtrados por dispositivo."""
-        return await app.state.storage.recent_flows(device_id=device_id, limit=limit)
+        """Fluxos recentes, opcionalmente filtrados por aparelho (todos os MACs dele)."""
+        return await _por_aparelho(app.state.storage.recent_flows, device_id, limit)
 
     @app.get("/api/dns")
     async def dns(
         device_id: str | None = Query(default=None),
         limit: int = Query(default=100, ge=1, le=1000),
     ) -> list[dict]:
-        """Consultas DNS recentes, opcionalmente filtradas por dispositivo."""
-        return await app.state.storage.recent_dns(device_id=device_id, limit=limit)
+        """Consultas DNS recentes, opcionalmente filtradas por aparelho (todos os MACs dele)."""
+        return await _por_aparelho(app.state.storage.recent_dns, device_id, limit)
 
     @app.get("/api/events")
     async def events(
@@ -406,11 +502,12 @@ def create_app(storage, controls=None) -> FastAPI:
         flows = await app.state.storage.recent_flows(limit=4000)
         devices = [d for d in await _devices(hours=hours) if d["active"]]
         devmap = {d["id"]: d for d in devices}
+        _ap, mapa = await _grupos()
 
         agg: dict = {}
         svc_meta: dict = {}
         for f in flows:
-            did = f.get("device_id")
+            did = mapa.get(f.get("device_id"), f.get("device_id"))
             host = f.get("sni")
             if not host or _is_ip(host) or "." not in host:
                 continue
