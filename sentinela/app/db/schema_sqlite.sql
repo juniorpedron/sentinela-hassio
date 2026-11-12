@@ -102,3 +102,22 @@ CREATE INDEX IF NOT EXISTS idx_ndp_ts     ON ndp (ts DESC);
 -- TODO(sentinela): implementar purga periodica no run_pc (task de manutencao)
 -- comparando ts com strftime('now') e device.trust_state.
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- usage: volume agregado por hora, por dispositivo e por servico (host).
+-- Alimentado pela captura SPAN (bytes medidos pelos numeros de sequencia TCP
+-- entre o SYN e o FIN/RST). A coluna device.meta (JSON) e criada por migracao
+-- em SqliteStorage.connect().
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS usage (
+    bucket     TEXT NOT NULL,   -- ISO8601 truncado na hora (YYYY-MM-DDTHH)
+    device_id  TEXT NOT NULL,
+    host       TEXT NOT NULL,
+    proto      TEXT NOT NULL DEFAULT 'tcp',
+    bytes_up   INTEGER NOT NULL DEFAULT 0,
+    bytes_down INTEGER NOT NULL DEFAULT 0,
+    conns      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (bucket, device_id, host, proto)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_device ON usage (device_id, bucket DESC);

@@ -26,6 +26,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _so_ip(nome: Optional[str]) -> bool:
+    """True se o 'hostname' e apenas um endereco IP (nao serve como nome)."""
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(str(nome).strip().rstrip("."))
+        return True
+    except ValueError:
+        return False
+
+
 # Assinatura de um listener: recebe uma msg {"kind": ..., "payload": {...}}.
 # Pode ser sincrono ou assincrono (corotina).
 Listener = Callable[[dict], Any]
@@ -173,6 +184,30 @@ class Storage:
         'talkers' (device). Retorna [{label, total}].
         """
         raise NotImplementedError
+
+
+    # ------------------------------------------------------------------ #
+    # Identificacao e volume (implementados no SQLite; no-op por padrao)
+    # ------------------------------------------------------------------ #
+    async def merge_device_meta(self, device_id: str, **kv: Any) -> None:
+        """Acrescenta pistas de identificacao (DHCP, User-Agent...) ao dispositivo."""
+        return None
+
+    async def add_usage_many(self, rows: list[dict]) -> None:
+        """Soma volume por (hora, dispositivo, host, proto)."""
+        return None
+
+    async def usage_by_device(self, hours: int = 24) -> list[dict]:
+        return []
+
+    async def usage_by_host(
+        self, hours: int = 24, device_id: Optional[str] = None, limit: int = 200
+    ) -> list[dict]:
+        return []
+
+    async def activity_by_device(self, hours: int = 24) -> dict:
+        """{device_id: {flows, dns, last_flow, last_dns}} na janela."""
+        return {}
 
 
 # ====================================================================== #
@@ -554,6 +589,12 @@ class SqliteStorage(Storage):
         except FileNotFoundError:
             # TODO(sentinela): schema ausente; garantir db/schema_sqlite.sql no deploy.
             pass
+        # Migracao leve: coluna device.meta (JSON com pistas de identificacao).
+        cur = await self._db.execute("PRAGMA table_info(device)")
+        cols = {r[1] for r in await cur.fetchall()}
+        await cur.close()
+        if cols and "meta" not in cols:
+            await self._db.execute("ALTER TABLE device ADD COLUMN meta TEXT")
         await self._db.commit()
 
     async def close(self) -> None:
@@ -585,6 +626,10 @@ class SqliteStorage(Storage):
         ip6: Optional[str] = None,
     ) -> tuple[str, bool]:
         now = _now_iso()
+        # Um "hostname" que e so o IP (DNS reverso sem nome) nao identifica nada
+        # e apagaria um nome melhor ja conhecido (ex.: o nome DHCP).
+        if hostname and _so_ip(hostname):
+            hostname = None
         async with self._lock:
             existing = await self._fetchone(
                 "SELECT * FROM device WHERE mac = ?", (mac,)
@@ -795,6 +840,118 @@ class SqliteStorage(Storage):
             )
             await self._db.commit()
         return await self.get_device(device_id)
+
+    # -- identificacao e volume ----------------------------------------- #
+    async def merge_device_meta(self, device_id: str, **kv: Any) -> None:
+        """Junta pistas novas ao JSON ``device.meta`` (so grava valor nao-vazio).
+
+        Se vier ``dhcp_name`` e o hostname atual estiver vazio ou for so um IP,
+        o hostname passa a ser o nome DHCP (o que o proprio aparelho anuncia).
+        """
+        import json as _json
+
+        novos = {k: v for k, v in kv.items() if v not in (None, "")}
+        if not novos:
+            return
+        async with self._lock:
+            row = await self._fetchone(
+                "SELECT meta, hostname FROM device WHERE id = ?", (device_id,)
+            )
+            if row is None:
+                return
+            try:
+                meta = _json.loads(row.get("meta") or "{}")
+                if not isinstance(meta, dict):
+                    meta = {}
+            except ValueError:
+                meta = {}
+            if all(meta.get(k) == v for k, v in novos.items()):
+                return
+            meta.update(novos)
+            hostname = row.get("hostname")
+            nome = novos.get("dhcp_name")
+            if nome and (not hostname or _so_ip(hostname)):
+                hostname = nome
+            await self._db.execute(
+                "UPDATE device SET meta = ?, hostname = ? WHERE id = ?",
+                (_json.dumps(meta, ensure_ascii=False), hostname, device_id),
+            )
+            await self._db.commit()
+
+    async def add_usage_many(self, rows: list[dict]) -> None:
+        if not rows:
+            return
+        bucket = _now_iso()[:13]
+        async with self._lock:
+            await self._db.executemany(
+                """
+                INSERT INTO usage (bucket, device_id, host, proto, bytes_up, bytes_down, conns)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (bucket, device_id, host, proto) DO UPDATE SET
+                    bytes_up   = bytes_up + excluded.bytes_up,
+                    bytes_down = bytes_down + excluded.bytes_down,
+                    conns      = conns + excluded.conns
+                """,
+                [
+                    (
+                        r.get("bucket") or bucket, r["device_id"], r["host"],
+                        r.get("proto") or "tcp", int(r.get("bytes_up") or 0),
+                        int(r.get("bytes_down") or 0), int(r.get("conns") or 0),
+                    )
+                    for r in rows
+                ],
+            )
+            await self._db.commit()
+
+    @staticmethod
+    def _cutoff_bucket(hours: int) -> str:
+        from datetime import timedelta
+
+        return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()[:13]
+
+    async def usage_by_device(self, hours: int = 24) -> list[dict]:
+        return await self._fetchall(
+            "SELECT device_id, sum(bytes_up) AS bytes_up, sum(bytes_down) AS bytes_down, "
+            "sum(conns) AS conns FROM usage WHERE bucket >= ? GROUP BY device_id",
+            (self._cutoff_bucket(hours),),
+        )
+
+    async def usage_by_host(
+        self, hours: int = 24, device_id: Optional[str] = None, limit: int = 200
+    ) -> list[dict]:
+        cut = self._cutoff_bucket(hours)
+        if device_id:
+            return await self._fetchall(
+                "SELECT device_id, host, sum(bytes_up) AS bytes_up, "
+                "sum(bytes_down) AS bytes_down, sum(conns) AS conns FROM usage "
+                "WHERE bucket >= ? AND device_id = ? GROUP BY host "
+                "ORDER BY sum(bytes_up) + sum(bytes_down) DESC LIMIT ?",
+                (cut, device_id, limit),
+            )
+        return await self._fetchall(
+            "SELECT device_id, host, sum(bytes_up) AS bytes_up, "
+            "sum(bytes_down) AS bytes_down, sum(conns) AS conns FROM usage "
+            "WHERE bucket >= ? GROUP BY device_id, host "
+            "ORDER BY sum(bytes_up) + sum(bytes_down) DESC LIMIT ?",
+            (cut, limit),
+        )
+
+    async def activity_by_device(self, hours: int = 24) -> dict:
+        from datetime import timedelta
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        out: dict = {}
+        for tbl, k_n, k_last in (("flow", "flows", "last_flow"), ("dns_query", "dns", "last_dns")):
+            rows = await self._fetchall(
+                f"SELECT device_id, count(*) AS n, max(ts) AS ultimo FROM {tbl} "
+                f"WHERE ts > ? AND device_id IS NOT NULL GROUP BY device_id",
+                (cutoff,),
+            )
+            for r in rows:
+                d = out.setdefault(r["device_id"], {"flows": 0, "dns": 0})
+                d[k_n] = r["n"]
+                d[k_last] = r["ultimo"]
+        return out
 
     async def stats(self) -> dict:
         # No SQLite os ts sao ISO8601; comparamos com string de 24h atras (UTC).

@@ -32,14 +32,45 @@ async function apiGet(url) {
 const estado = {
   devices: [], filtro: "", selecionado: null, modo: "pc",
   filtrosFeed: { device: true, dns: true, flow: true, event: true },
+  filtroDev: "ativos", aba: "conexoes", trafego: { conexoes: [], volume: [], dns: [] },
+  trafegoDev: "", trafegoBusca: "", grafoHoras: 168,
 };
+
+// ----------------------- formatação / identificação -----------------------
+const KIND_ICON = { router: "🌐", server: "🗄️", computer: "💻", phone: "📱", tablet: "📱", watch: "⌚",
+  tv: "📺", console: "🎮", speaker: "🔊", printer: "🖨️", camera: "📷", iot: "💡", unknown: "❔" };
+
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB", "TB"];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n >= 100 ? 0 : 1).replace(".", ",") + " " + u[i];
+}
+
+function haQuanto(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return "—";
+  const s2 = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (s2 < 90) return "agora";
+  if (s2 < 3600) return "há " + Math.round(s2 / 60) + " min";
+  if (s2 < 86400) return "há " + Math.round(s2 / 3600) + " h";
+  return "há " + Math.round(s2 / 86400) + " d";
+}
+
+function devPorId(id) { return estado.devices.find((d) => d.id === id) || (estado.todosDevs || []).find((d) => d.id === id); }
+function nomeDev(id, fallback) { const d = devPorId(id); return d ? (d.display_name || d.label || d.hostname || d.mac) : (fallback || "?"); }
+function iconeDev(d) { return KIND_ICON[(d && d.kind) || "unknown"] || "❔"; }
+function corCat(cat) { return CAT_COR[cat] || "#64748b"; }
 
 // Cores por categoria de serviço (grafo) e por confiança (dispositivos).
 const CAT_COR = {
   IA: "#a78bfa", Google: "#60a5fa", Microsoft: "#2dd4bf", Apple: "#cbd5e1",
   Social: "#f472b6", Mensagens: "#4ade80", Streaming: "#fb7185", Busca: "#818cf8",
   Nuvem: "#fbbf24", Infra: "#fbbf24", CDN: "#fbbf24", Publicidade: "#ef4444",
-  Dev: "#38bdf8", Jogos: "#f59e0b", IoT: "#22d3ee", Sistema: "#94a3b8", Desconhecido: "#64748b", Outro: "#64748b",
+  Dev: "#38bdf8", Jogos: "#f59e0b", Bancos: "#34d399", Compras: "#fb923c", Estudo: "#c084fc", IoT: "#22d3ee", Sistema: "#94a3b8", Desconhecido: "#64748b", Outro: "#64748b",
 };
 const TRUST_COR = { trusted: "#3ecf8e", unknown: "#f6b13f", quarantine: "#f2555f" };
 
@@ -77,15 +108,34 @@ async function carregarHealth() {
     estado.readonly = !!h.readonly;
     document.body.classList.toggle("somente-leitura", estado.readonly);
     const bro = $("#badge-ro"); if (bro) bro.classList.toggle("oculto", !estado.readonly);
+    renderCaptura(h.capture);
   } catch (e) { console.error("health", e); }
+}
+
+// Barra com o que o sensor está de fato enxergando (contadores desde o início).
+function renderCaptura(c) {
+  const bar = $("#captura-bar"); if (!bar) return;
+  if (!c) { bar.classList.add("oculto"); return; }
+  const st = c.stats || {};
+  const item = (rot, v, tit) => `<span class="cap-item" title="${esc(tit || "")}"><b>${Number(v || 0).toLocaleString("pt-BR")}</b> ${rot}</span>`;
+  bar.innerHTML = `<span class="cap-tit mono">captura · ${esc(c.iface || "?")} · filtro ${esc(c.filtro || "?")}</span>` +
+    item("sites (TLS)", st.tls, "inícios de conexão segura com o nome do site") +
+    item("DNS", st.dns, "consultas de nome distintas") +
+    item("HTTP/3", st.quic, "inícios de conexão QUIC") +
+    item("HTTP", st.http, "requisições sem criptografia") +
+    item("conexões medidas", st.tcp_fechadas, "conexões TCP encerradas com volume medido") +
+    item("abertas", c.conexoes_abertas, "conexões TCP em andamento") +
+    item("DHCP", st.dhcp, "aparelhos que se apresentaram (nome/sistema)") +
+    item("entradas", st.entrada, "tentativas de conexão vindas de fora");
+  bar.classList.remove("oculto");
 }
 
 async function carregarStats() {
   try {
     const s = await apiGet("/api/stats");
-    // nº de dispositivos/desconhecidos vem de atualizarNivel (lista já sem os internos do HA).
-    $("#stat-dns").textContent = s.dns_24h ?? "—";
-    $("#stat-events").textContent = s.events_24h ?? "—";
+    // nº de dispositivos/desconhecidos vem de atualizarNivel (lista da LAN).
+    $("#stat-dns").textContent = (s.dns_24h ?? "—").toLocaleString ? Number(s.dns_24h || 0).toLocaleString("pt-BR") : "—";
+    $("#stat-events").textContent = Number(s.events_24h || 0).toLocaleString("pt-BR");
   } catch (e) { console.error("stats", e); }
 }
 
@@ -135,6 +185,7 @@ const GV_GRUPO_COR = { Rede: "#f5b13b", Computadores: "#5eb1ef", Celulares: "#3e
   "TV & Mídia": "#fb7185", Voz: "#a78bfa", IoT: "#2dd4bf", Outros: "#8aa0b6" };
 
 function gvGrupo(n) {
+  if (n.group && GV_GRUPOS.includes(n.group)) return n.group;   // tipo já identificado pela API
   const s = ((n.label || "") + " " + ((n.meta && n.meta.fabricante) || "")).toLowerCase();
   if (/twibi|modem|roteador|raspberry|\bpi\b|sentinela|gateway|intelbras|huawei|ubiquiti|mikrotik|tp-?link/.test(s)) return "Rede";
   if (/\bpc\b|macbook|\basus\b|omen|notebook|computador|laptop|desktop|imac|dell|lenovo/.test(s)) return "Computadores";
@@ -429,7 +480,7 @@ function gvUp() {
 
 async function carregarGrafo() {
   try {
-    const data = await apiGet("/api/graph?limit=40");
+    const data = await apiGet("/api/graph?limit=40&hours=" + estado.grafoHoras);
     if (!GV.ctx) gvInit();
     gvSetData(data);
   } catch (e) { console.error("grafo", e); }
@@ -457,14 +508,24 @@ function mostrarNo(n) {
 // ----------------------- resumo (chart + tops) -----------------------
 async function carregarResumo() {
   try {
-    const [tl, dom, apps] = await Promise.all([
+    const [tl, ov] = await Promise.all([
       apiGet("/api/timeline?hours=24"),
-      apiGet("/api/top?kind=domains&hours=24&limit=8"),
-      apiGet("/api/top?kind=apps&hours=24&limit=8"),
+      apiGet("/api/overview?hours=24"),
     ]);
     renderChart(tl);
-    renderTop($("#top-domains"), dom);
-    renderTop($("#top-apps"), apps);
+    const sb = $("#stat-bytes"); if (sb) sb.textContent = fmtBytes((ov.bytes_up || 0) + (ov.bytes_down || 0));
+    const temVol = (x) => (x.bytes_up || 0) + (x.bytes_down || 0) > 0;
+    renderTop($("#top-devices"), (ov.top_devices || []).slice(0, 8).map((d) => ({
+      label: (KIND_ICON[d.kind] || "❔") + " " + d.name,
+      total: temVol(d) ? (d.bytes_up + d.bytes_down) : (d.flows + d.dns),
+      texto: temVol(d) ? fmtBytes(d.bytes_up + d.bytes_down) : (d.flows + d.dns) + " reg.",
+      id: d.id,
+    })), (i) => abrirDetalhe(i.id));
+    renderTop($("#top-services"), (ov.top_services || []).slice(0, 8).map((x) => ({
+      label: x.name, cor: corCat(x.category), total: x.bytes_up + x.bytes_down,
+      texto: fmtBytes(x.bytes_up + x.bytes_down), dica: `${x.category} · ${x.conns} conexões · ${x.devices} aparelho(s)`,
+      busca: x.name,
+    })), (i) => { estado.aba = "volume"; estado.trafegoBusca = i.busca; $("#trafego-busca").value = i.busca; marcarAba(); renderTrafego(); $("#painel-trafego").scrollIntoView({ behavior: "smooth" }); });
   } catch (e) { console.error("resumo", e); }
 }
 
@@ -486,32 +547,43 @@ function renderChart(tl) {
     </svg>`;
 }
 
-function renderTop(host, itens) {
-  if (!itens || !itens.length) { host.innerHTML = '<p class="vazio">Sem dados.</p>'; return; }
+function renderTop(host, itens, aoClicar) {
+  if (!host) return;
+  if (!itens || !itens.length) { host.innerHTML = '<p class="vazio">Sem dados ainda.</p>'; return; }
   const max = Math.max(1, ...itens.map((i) => i.total || 0));
-  host.innerHTML = itens.map((i) => `
-    <div class="top-item">
-      <div class="top-barra" style="width:${Math.round((100 * (i.total || 0)) / max)}%"></div>
-      <span class="top-label" title="${esc(i.label)}">${esc(i.label || "—")}</span>
-      <span class="top-total mono">${i.total ?? 0}</span>
+  host.innerHTML = itens.map((i, k) => `
+    <div class="top-item${aoClicar ? " clicavel" : ""}" data-k="${k}" title="${esc(i.dica || i.label)}">
+      <div class="top-barra" style="width:${Math.round((100 * (i.total || 0)) / max)}%${i.cor ? `;background:${i.cor}33` : ""}"></div>
+      <span class="top-label">${i.cor ? `<i class="dot" style="background:${i.cor}"></i>` : ""}${esc(i.label || "—")}</span>
+      <span class="top-total mono">${esc(i.texto ?? i.total ?? 0)}</span>
     </div>`).join("");
+  if (aoClicar) host.querySelectorAll(".top-item").forEach((n) => n.addEventListener("click", () => aoClicar(itens[+n.dataset.k])));
 }
 
 // ----------------------- lista de dispositivos -----------------------
 // Dispositivos internos do Home Assistant (rede docker 172.30.x) — ruído, ficam fora
 // da lista/contagem/mapa (o mapa já os filtra por conta própria).
 function ehInternoDev(d) {
-  const ip = d.ip4 || "", lab = (d.label || "").toLowerCase(), hn = (d.hostname || "").toLowerCase();
-  return ip.startsWith("172.30.") || lab.startsWith("ha interno") ||
-    hn.includes("hass.io") || hn === "supervisor" || hn.includes("observer") || hn.includes("core-ssh");
+  // A API já entrega só a LAN; mantido para rótulos antigos ("HA interno").
+  return !!d.internal || (d.label || "").toLowerCase().startsWith("ha interno");
 }
 
 async function carregarDevices() {
   try {
-    const todos = await apiGet("/api/devices");
-    estado.devices = (todos || []).filter((d) => !ehInternoDev(d));
-    renderDevices(); atualizarNivel();
+    const todos = await apiGet("/api/devices?hours=24");
+    estado.todosDevs = todos || [];
+    estado.devices = estado.todosDevs.filter((d) => !ehInternoDev(d));
+    renderDevices(); atualizarNivel(); preencherSelectDev();
   } catch (e) { console.error("devices", e); $("#lista-devices").innerHTML = '<p class="vazio">Falha ao carregar.</p>'; }
+}
+
+function preencherSelectDev() {
+  const sel = $("#trafego-dev"); if (!sel) return;
+  const atual = estado.trafegoDev;
+  const lista = estado.devices.filter((d) => d.capturado).sort((a, b) => a.display_name.localeCompare(b.display_name, "pt-BR"));
+  sel.innerHTML = '<option value="">todos os dispositivos</option>' +
+    lista.map((d) => `<option value="${esc(d.id)}">${iconeDev(d)} ${esc(d.display_name)}</option>`).join("");
+  sel.value = lista.some((d) => d.id === atual) ? atual : "";
 }
 
 function chipTrust(e_) {
@@ -523,29 +595,46 @@ function chipTrust(e_) {
 
 function casaFiltro(d, termo) {
   if (!termo) return true;
-  return [d.mac, d.mac_vendor, d.hostname, d.ip4, d.ip6, d.label].filter(Boolean).join(" ").toLowerCase().includes(termo);
+  return [d.display_name, d.mac, d.mac_vendor, d.hostname, d.ip4, d.ip6, d.label, d.kind_label, d.os]
+    .filter(Boolean).join(" ").toLowerCase().includes(termo);
 }
+
+const FILTROS_DEV = {
+  ativos: (d) => d.active,
+  desconhecidos: (d) => (d.trust_state || "unknown") === "unknown" && d.active,
+  semnome: (d) => !d.named && d.active,
+  todos: () => true,
+};
 
 function renderDevices() {
   const cont = $("#lista-devices");
   const termo = estado.filtro.trim().toLowerCase();
-  const lista = estado.devices.filter((d) => casaFiltro(d, termo));
-  lista.sort((a, b) => {
-    const ua = a.trust_state === "unknown" ? 0 : 1, ub = b.trust_state === "unknown" ? 0 : 1;
-    if (ua !== ub) return ua - ub;
-    return String(b.last_seen || "").localeCompare(String(a.last_seen || ""));
-  });
-  if (!lista.length) { cont.innerHTML = '<p class="vazio">Nenhum dispositivo.</p>'; return; }
+  for (const k of Object.keys(FILTROS_DEV)) { const b = $("#fc-" + k); if (b) b.textContent = estado.devices.filter(FILTROS_DEV[k]).length; }
+  // com busca digitada, procura em todos (inclusive os antigos)
+  const base = termo ? estado.devices : estado.devices.filter(FILTROS_DEV[estado.filtroDev] || FILTROS_DEV.ativos);
+  const lista = base.filter((d) => casaFiltro(d, termo));
+  const vol = (d) => (d.bytes_up || 0) + (d.bytes_down || 0);
+  lista.sort((a, b) => (vol(b) - vol(a)) || ((b.flows + b.dns) - (a.flows + a.dns)) ||
+    String(b.last_seen || "").localeCompare(String(a.last_seen || "")));
+  if (!lista.length) { cont.innerHTML = '<p class="vazio">Nenhum dispositivo neste filtro.</p>'; return; }
   cont.innerHTML = "";
   for (const d of lista) {
-    const card = el("div", "device dev-" + ((d.trust_state || "unknown")));
+    const card = el("div", "device dev-" + ((d.trust_state || "unknown")) + (d.active ? "" : " dev-inativo"));
     card.dataset.id = d.id;
     if (d.id === estado.selecionado) card.classList.add("ativo");
-    const nome = d.label || d.hostname || d.mac || d.id;
+    const pistas = [d.kind_label, d.os, d.mac_vendor].filter(Boolean).join(" · ");
+    const uso = vol(d) > 0
+      ? `<span title="recebido / enviado em 24 h">↓ ${fmtBytes(d.bytes_down)} · ↑ ${fmtBytes(d.bytes_up)}</span>`
+      : (d.capturado ? "<span>volume ainda não medido</span>" : '<span class="mudo">sem tráfego capturado em 24 h</span>');
+    const cont2 = d.capturado ? `<span>${d.flows} conexões · ${d.dns} DNS</span>` : "";
     card.innerHTML = `
-      <div class="device-linha1"><span class="device-nome">${esc(nome)}</span>${chipTrust(d.trust_state)}</div>
-      <div class="device-linha2 mono"><span title="MAC">${esc(d.mac || "—")}</span><span title="IPv4">${esc(d.ip4 || "—")}</span></div>
-      <div class="device-linha3"><span class="device-vendor">${esc(d.mac_vendor || "fabricante desconhecido")}</span><span class="device-visto mono">${hora(d.last_seen)}</span></div>`;
+      <div class="device-icone" title="${esc(d.kind_label)} (palpite por ${esc(d.kind_source)})">${iconeDev(d)}</div>
+      <div class="device-corpo">
+        <div class="device-linha1"><span class="device-nome" title="${esc(d.display_name)}">${esc(d.display_name)}</span>${chipTrust(d.trust_state)}</div>
+        <div class="device-linha2 mono"><span title="IPv4">${esc(d.ip4 || "—")}</span><span title="MAC${d.private_mac ? " privado (aleatório)" : ""}">${esc(d.mac || "—")}${d.private_mac ? " ⚑" : ""}</span></div>
+        <div class="device-linha3"><span class="device-vendor">${esc(pistas || "sem pistas de identificação")}</span><span class="device-visto mono" title="${hora(d.last_seen)}">${haQuanto(d.last_seen)}</span></div>
+        <div class="device-linha4 mono">${uso}${cont2}</div>
+      </div>`;
     card.addEventListener("click", () => abrirDetalhe(d.id));
     cont.appendChild(card);
   }
@@ -554,20 +643,78 @@ function renderDevices() {
 // Nivel de seguranca da rede (assinatura): verde/ambar/vermelho conforme os estados.
 function atualizarNivel() {
   const secao = $("#nivel-rede"); if (!secao) return;
-  const devs = estado.devices || [];
-  const q = devs.filter((d) => d.trust_state === "quarantine").length;
+  const todos = estado.devices || [];
+  const devs = todos.filter((d) => d.active);
+  const q = todos.filter((d) => d.trust_state === "quarantine").length;
   const u = devs.filter((d) => (d.trust_state || "unknown") === "unknown").length;
   const t = devs.filter((d) => d.trust_state === "trusted").length;
-  const sd = $("#stat-devices"); if (sd) sd.textContent = devs.length;
+  const sd = $("#stat-devices"); if (sd) sd.innerHTML = `${devs.length}<small> / ${todos.length}</small>`;
   const su = $("#stat-unknown"); if (su) su.textContent = u;
   let nivel = "", titulo = "Avaliando rede…", sub = "mapeando dispositivos e tráfego";
-  if (q > 0) { nivel = "nr-alert"; titulo = "Alerta"; sub = `${q} em quarentena · ${u} não classificado${u === 1 ? "" : "s"}`; }
-  else if (u > 0) { nivel = "nr-warn"; titulo = "Atenção"; sub = `${u} dispositivo${u === 1 ? "" : "s"} desconhecido${u === 1 ? "" : "s"} — classifique como confiável ou marque`; }
-  else if (devs.length) { nivel = "nr-safe"; titulo = "Rede segura"; sub = `todos os ${t} dispositivos são confiáveis`; }
+  if (q > 0) { nivel = "nr-alert"; titulo = "Alerta"; sub = `${q} em quarentena · ${u} ativo${u === 1 ? "" : "s"} não classificado${u === 1 ? "" : "s"}`; }
+  else if (u > 0) { nivel = "nr-warn"; titulo = "Atenção"; sub = `${u} dispositivo${u === 1 ? "" : "s"} ativo${u === 1 ? "" : "s"} sem classificação — abra e marque como confiável ou quarentena`; }
+  else if (devs.length) { nivel = "nr-safe"; titulo = "Rede segura"; sub = `os ${t} dispositivos ativos são confiáveis`; }
   secao.classList.remove("nr-safe", "nr-warn", "nr-alert");
   if (nivel) secao.classList.add(nivel);
   $("#nr-titulo").textContent = titulo;
   $("#nr-sub").textContent = sub;
+}
+
+// ----------------------- tráfego identificado -----------------------
+async function carregarTrafego() {
+  try {
+    const q = estado.trafegoDev ? "&device_id=" + encodeURIComponent(estado.trafegoDev) : "";
+    const [con, vol, dns] = await Promise.all([
+      apiGet("/api/traffic?limit=400" + q),
+      apiGet("/api/usage?hours=24&limit=400" + q),
+      apiGet("/api/dns?limit=400" + q),
+    ]);
+    estado.trafego = { conexoes: con || [], volume: vol || [], dns: dns || [] };
+    renderTrafego();
+  } catch (e) { console.error("trafego", e); }
+}
+
+function marcarAba() {
+  document.querySelectorAll("#trafego-abas .aba").forEach((b) => b.classList.toggle("ativa", b.dataset.aba === estado.aba));
+}
+
+function celDev(id, nome, kind) {
+  return `<td class="t-dev"><a href="#" data-dev="${esc(id || "")}">${KIND_ICON[kind] || "❔"} ${esc(nome || "?")}</a></td>`;
+}
+function celSvc(nome, cat) {
+  return `<td class="t-svc"><i class="dot" style="background:${corCat(cat)}"></i>${esc(nome)}<span class="t-cat">${esc(cat || "")}</span></td>`;
+}
+
+function renderTrafego() {
+  const tb = $("#trafego-tabela"); if (!tb) return;
+  const termo = (estado.trafegoBusca || "").trim().toLowerCase();
+  const casa = (...v) => !termo || v.filter(Boolean).join(" ").toLowerCase().includes(termo);
+  let cab = "", linhas = [];
+  if (estado.aba === "conexoes") {
+    cab = "<tr><th>quando</th><th>dispositivo</th><th>serviço</th><th>destino</th><th>tipo</th></tr>";
+    linhas = estado.trafego.conexoes.filter((r) => casa(r.device, r.service, r.category, r.host, r.dst_ip, r.app)).slice(0, 250).map((r) =>
+      `<tr><td class="mono t-hora" title="${hora(r.ts)}">${haQuanto(r.ts)}</td>${celDev(r.device_id, r.device, r.kind)}${celSvc(r.service, r.category)}
+       <td class="mono t-host">${esc(r.host || r.dst_ip || "—")}${r.dst_port && r.dst_port !== 443 ? ":" + esc(r.dst_port) : ""}</td><td class="mono t-app">${esc(r.app || r.proto || "")}</td></tr>`);
+  } else if (estado.aba === "volume") {
+    cab = "<tr><th>dispositivo</th><th>serviço</th><th>site</th><th class='num'>recebido</th><th class='num'>enviado</th><th class='num'>conexões</th></tr>";
+    const rows = estado.trafego.volume.filter((r) => casa(r.device, r.service, r.category, r.host));
+    const max = Math.max(1, ...rows.map((r) => r.bytes_down + r.bytes_up));
+    linhas = rows.slice(0, 250).map((r) =>
+      `<tr>${celDev(r.device_id, r.device, r.kind)}${celSvc(r.service, r.category)}<td class="mono t-host">${esc(r.host)}</td>
+       <td class="num mono"><span class="t-barra" style="width:${Math.round(60 * (r.bytes_down + r.bytes_up) / max)}px;background:${corCat(r.category)}"></span>${fmtBytes(r.bytes_down)}</td>
+       <td class="num mono">${fmtBytes(r.bytes_up)}</td><td class="num mono">${r.conns}</td></tr>`);
+  } else {
+    cab = "<tr><th>quando</th><th>dispositivo</th><th>serviço</th><th>nome consultado</th><th>tipo</th></tr>";
+    linhas = estado.trafego.dns.map((r) => { const fr = friendlyJS(r.qname); const d = devPorId(r.device_id) || {}; return { r, fr, d }; })
+      .filter(({ r, fr, d }) => casa(d.display_name, fr.name, fr.cat, r.qname)).slice(0, 250).map(({ r, fr, d }) =>
+        `<tr><td class="mono t-hora" title="${hora(r.ts)}">${haQuanto(r.ts)}</td>${celDev(r.device_id, d.display_name || r.client_ip, d.kind)}${celSvc(fr.name, fr.cat)}
+         <td class="mono t-host">${esc(r.qname)}</td><td class="mono t-app">${esc(r.qtype || "")}</td></tr>`);
+  }
+  const vazio = estado.aba === "volume"
+    ? "Ainda sem volume medido. O volume aparece quando as conexões TCP se encerram (não inclui QUIC/UDP)."
+    : "Nada capturado neste filtro.";
+  tb.innerHTML = `<thead>${cab}</thead><tbody>${linhas.join("") || `<tr><td colspan="6" class="vazio">${vazio}</td></tr>`}</tbody>`;
+  tb.querySelectorAll("a[data-dev]").forEach((a) => a.addEventListener("click", (ev) => { ev.preventDefault(); if (a.dataset.dev) abrirDetalhe(a.dataset.dev); }));
 }
 
 // ----------------------- feed ao vivo (WS) -----------------------
@@ -588,11 +735,12 @@ function marcarWS(on) { const s = $("#status-ws"); s.textContent = on ? "● ao 
 
 function descreveMsg(msg) {
   const p = msg.payload || {};
+  const quem = p.device_id ? `<b class="feed-quem">${esc(nomeDev(p.device_id, p.src_ip || p.client_ip))}</b> ` : "";
   switch (msg.kind) {
     case "device": return { icone: "◈", titulo: "Dispositivo", texto: `${esc(p.hostname || p.mac || p.id || "novo")} — ${esc(p.mac_vendor || "")}`, sev: "info", ts: p.last_seen || p.first_seen };
-    case "dns": return { icone: "⌘", titulo: p.blocked ? "DNS bloqueado" : "DNS", texto: `${esc(p.qname || "")} ${p.qtype ? "(" + esc(p.qtype) + ")" : ""}`, sev: p.blocked ? "warning" : "info", ts: p.ts };
-    case "flow": return { icone: "⇄", titulo: "Conexão", texto: `${p.app_proto ? esc(p.app_proto) + " → " : ""}${esc(p.sni || p.dst_ip || "")}${p.dst_port ? ":" + esc(p.dst_port) : ""} ${esc(p.proto || "")}`, sev: "info", ts: p.ts };
-    case "event": return { icone: "⚑", titulo: esc(p.title || p.type || "Evento"), texto: esc(p.detail || ""), sev: (p.severity || "info").toLowerCase(), ts: p.ts };
+    case "dns": { const fr = friendlyJS(p.qname); return { icone: "⌘", titulo: p.blocked ? "DNS bloqueado" : "DNS", texto: `${quem}consultou ${esc(fr.name)} · ${esc(p.qname || "")} ${p.qtype ? "(" + esc(p.qtype) + ")" : ""}`, sev: p.blocked ? "warning" : "info", ts: p.ts }; }
+    case "flow": { const alvo = p.sni || p.dst_ip || ""; const fr = friendlyJS(alvo); return { icone: "⇄", titulo: "Conexão", texto: `${quem}→ ${esc(fr.name)} · ${esc(alvo)}${p.dst_port && p.dst_port !== 443 ? ":" + esc(p.dst_port) : ""} ${esc(p.app_proto || p.proto || "")}`, sev: "info", ts: p.ts }; }
+    case "event": return { icone: "⚑", titulo: esc(p.title || p.type || "Evento"), texto: quem + esc(p.detail || ""), sev: (p.severity || "info").toLowerCase(), ts: p.ts };
     default: return { icone: "•", titulo: esc(msg.kind), texto: "", sev: "info", ts: null };
   }
 }
@@ -632,12 +780,13 @@ async function abrirDetalhe(id) {
   aside.setAttribute("aria-hidden", "false");
   $("#detalhe-corpo").innerHTML = '<p class="vazio">Carregando…</p>';
   try {
-    const [dev, flows, dns] = await Promise.all([
+    const [dev, flows, dns, uso] = await Promise.all([
       apiGet(`/api/devices/${encodeURIComponent(id)}`),
       apiGet(`/api/flows?device_id=${encodeURIComponent(id)}&limit=50`),
       apiGet(`/api/dns?device_id=${encodeURIComponent(id)}&limit=50`),
+      apiGet(`/api/usage?hours=24&limit=15&device_id=${encodeURIComponent(id)}`).catch(() => []),
     ]);
-    renderDetalhe(dev, flows, dns);
+    renderDetalhe(dev, flows, dns, uso);
   } catch (e) { console.error("detalhe", e); $("#detalhe-corpo").innerHTML = '<p class="vazio">Falha ao carregar.</p>'; }
 }
 
@@ -659,6 +808,11 @@ const _FRULES = [
   ["googlevideo", "YouTube", "Streaming"], ["youtube", "YouTube", "Streaming"], ["ytimg", "YouTube", "Streaming"],
   ["netflix", "Netflix", "Streaming"], ["nflxvideo", "Netflix", "Streaming"], ["spotify", "Spotify", "Streaming"], ["twitch", "Twitch", "Streaming"],
   ["whatsapp", "WhatsApp", "Mensagens"], ["telegram", "Telegram", "Mensagens"],
+  ["playstation", "PlayStation", "Jogos"], ["xboxlive", "Xbox", "Jogos"], ["nintendo", "Nintendo", "Jogos"], ["roblox", "Roblox", "Jogos"],
+  ["disney", "Disney+", "Streaming"], ["hbomax", "Max (HBO)", "Streaming"], ["primevideo", "Prime Video", "Streaming"], ["globo", "Globo", "Streaming"], ["deezer", "Deezer", "Streaming"],
+  ["nubank", "Nubank", "Bancos"], ["itau", "Itaú", "Bancos"], ["bradesco", "Bradesco", "Bancos"], ["santander", "Santander", "Bancos"], ["mercadopago", "Mercado Pago", "Bancos"],
+  ["mercadoli", "Mercado Livre", "Compras"], ["shopee", "Shopee", "Compras"], ["aliexpress", "AliExpress", "Compras"],
+  ["duolingo", "Duolingo", "Estudo"], ["discord", "Discord", "Mensagens"], ["zoom.us", "Zoom", "Mensagens"], ["tuya", "Tuya", "IoT"], ["shelly", "Shelly", "IoT"],
   ["instagram", "Instagram", "Social"], ["cdninstagram", "Instagram", "Social"], ["facebook", "Facebook", "Social"], ["fbcdn", "Facebook", "Social"], ["tiktok", "TikTok", "Social"], ["twimg", "X", "Social"], ["twitter", "X", "Social"],
   ["github", "GitHub", "Dev"], ["duckduckgo", "DuckDuckGo", "Busca"],
   ["doubleclick", "Anúncios", "Publicidade"], ["googlesyndication", "Anúncios", "Publicidade"], ["adservice", "Anúncios", "Publicidade"], ["scorecardresearch", "Anúncios", "Publicidade"], ["crashlytics", "Telemetria", "Publicidade"],
@@ -695,11 +849,29 @@ function mesclarLive(flows, dns) {
   return rows.slice(0, 50).map((r) => liveRowHtml(r.kind, r.host, r.ts)).join("");
 }
 
-function renderDetalhe(dev, flows, dns) {
+function renderDetalhe(dev, flows, dns, uso) {
   if (!dev) { $("#detalhe-corpo").innerHTML = '<p class="vazio">Não encontrado.</p>'; return; }
-  $("#detalhe-titulo").textContent = dev.label || dev.hostname || dev.mac || dev.id;
+  $("#detalhe-titulo").textContent = iconeDev(dev) + " " + (dev.display_name || dev.label || dev.hostname || dev.mac || dev.id);
+  const m = dev.meta || {};
+  const ident = `<div class="detalhe-secao">
+    ${linhaProp("tipo", esc(dev.kind_label || "—") + ` <span class="mudo">(palpite por ${esc(dev.kind_source || "?")})</span>`)}
+    ${linhaProp("sistema", esc(dev.os || "—"))}
+    ${linhaProp("nome que anuncia", esc(m.dhcp_name || "—"))}
+    ${linhaProp("nome na rede", esc(dev.hostname || "—"))}
+    ${m.ua ? linhaProp("navegador / app", `<span class="mono quebra">${esc(m.ua)}</span>`) : ""}
+    ${m.dhcp_vendor ? linhaProp("classe DHCP", `<span class="mono">${esc(m.dhcp_vendor)}</span>`) : ""}
+    ${dev.private_mac ? linhaProp("mac privado", "sim — endereço aleatório; o mesmo aparelho pode reaparecer com outro MAC") : ""}
+    ${linhaProp("primeira vez", hora(dev.first_seen))}
+  </div>`;
+  const maxU = Math.max(1, ...(uso || []).map((u) => u.bytes_up + u.bytes_down));
+  const consumo = (uso && uso.length) ? uso.map((u) => `
+    <div class="top-item" title="${esc(u.host)} · ${u.conns} conexões">
+      <div class="top-barra" style="width:${Math.round(100 * (u.bytes_up + u.bytes_down) / maxU)}%;background:${corCat(u.category)}33"></div>
+      <span class="top-label"><i class="dot" style="background:${corCat(u.category)}"></i>${esc(u.service)} <span class="mudo mono">${esc(u.host)}</span></span>
+      <span class="top-total mono">↓ ${fmtBytes(u.bytes_down)} · ↑ ${fmtBytes(u.bytes_up)}</span>
+    </div>`).join("") : '<p class="vazio">Sem volume medido em 24 h.</p>';
   const id = dev.id;
-  const box = estado.readonly ? '<p class="intercept-aviso">🔒 Modo somente leitura (rede não-confiável) — interceptação desabilitada.</p>' : dev.ip4 ? `
+  const box = estado.modo === "pi" ? '<p class="intercept-aviso">Tráfego deste aparelho capturado de forma passiva pelo espelho da rede (SPAN).</p>' : estado.readonly ? '<p class="intercept-aviso">🔒 Modo somente leitura (rede não-confiável) — interceptação desabilitada.</p>' : dev.ip4 ? `
     <div class="int-box">
       <button class="btn-int" id="btn-intercept">▶ Interceptar tráfego ao vivo</button>
       <span class="intercept-status mono" id="intercept-status"></span>
@@ -719,7 +891,9 @@ function renderDetalhe(dev, flows, dns) {
     <div class="acao-label"><input id="in-label" class="busca" placeholder="rótulo (ex.: TV da sala)" value="${esc(dev.label || "")}" /><button class="btn" id="btn-label">Salvar</button></div>`;
   $("#detalhe-corpo").innerHTML = `${box}
     <div class="live-cab"><h3 class="detalhe-h3">Acessando agora</h3><span class="live-tag" id="live-tag">● tempo real</span></div>
-    <div class="live-lista" id="live-lista">${liveInit || '<p class="vazio">Nada capturado ainda — clique em interceptar e interaja com o aparelho.</p>'}</div>
+    <div class="live-lista" id="live-lista">${liveInit || '<p class="vazio">Nada capturado deste aparelho ainda.</p>'}</div>
+    <h3 class="detalhe-h3">Consumo por serviço — 24h</h3><div class="top-list top-solta">${consumo}</div>
+    <h3 class="detalhe-h3">Identificação</h3>${ident}
     <h3 class="detalhe-h3">Dados do dispositivo</h3>${info}
     <h3 class="detalhe-h3">Classificação</h3>${acoes}`;
   $("#detalhe-corpo").querySelectorAll("[data-trust]").forEach((b) =>
@@ -766,6 +940,16 @@ function init() {
   if (ga) ga.addEventListener("click", carregarGrafo);
   $("#detalhe-fechar").addEventListener("click", fecharDetalhe);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") fecharDetalhe(); });
+  const gj = $("#grafo-janela");
+  if (gj) gj.addEventListener("change", () => { estado.grafoHoras = parseInt(gj.value, 10) || 168; carregarGrafo(); });
+  document.querySelectorAll("#dev-filtros .fchip").forEach((b) => b.addEventListener("click", () => {
+    estado.filtroDev = b.dataset.f;
+    document.querySelectorAll("#dev-filtros .fchip").forEach((x) => x.classList.toggle("ativa", x === b));
+    renderDevices();
+  }));
+  document.querySelectorAll("#trafego-abas .aba").forEach((b) => b.addEventListener("click", () => { estado.aba = b.dataset.aba; marcarAba(); renderTrafego(); }));
+  $("#trafego-busca").addEventListener("input", (e) => { estado.trafegoBusca = e.target.value; renderTrafego(); });
+  $("#trafego-dev").addEventListener("change", (e) => { estado.trafegoDev = e.target.value; carregarTrafego(); });
 
   carregarHealth();
   carregarStats();
@@ -773,9 +957,13 @@ function init() {
   carregarDevices();
   carregarResumo();
   carregarGrafo();
+  carregarTrafego();
   conectarWS();
 
   setInterval(carregarStats, 30000);
+  setInterval(carregarHealth, 30000);
+  setInterval(carregarDevices, 60000);
+  setInterval(carregarTrafego, 20000);
   setInterval(carregarResumo, 30000);
   setInterval(carregarGrafo, 30000);
   setInterval(carregarControl, 15000);

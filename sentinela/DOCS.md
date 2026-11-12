@@ -1,57 +1,64 @@
 # Sentinela — Add-on do Home Assistant
 
-Monitor **passivo** e **seguro** da rede doméstica, rodando 24/7 no mesmo Pi do
-Home Assistant, dentro da UI autenticada do HA (Ingress).
+Monitor da rede doméstica que roda 24/7 no mesmo Pi do Home Assistant, dentro da
+UI autenticada do HA (Ingress). Lê uma **cópia** do tráfego pela porta espelhada
+do switch (SPAN) e mostra quem está na rede e o que cada aparelho acessa.
 
-## O que este build faz (e o que NÃO faz)
+## O que este build faz (v0.3)
 
-**Faz (seguro, passivo):**
-- Inventário de dispositivos (ARP, ping sweep, mDNS, SSDP, fabricante por OUI)
-- Presença (quem está online) e **alerta de dispositivo novo**
-- Mapa da rede, histórico e o tráfego do próprio Pi
+**Inventário e identificação**
+- Descoberta por ARP, ping, mDNS e SSDP; fabricante pelo MAC.
+- Nome que o aparelho anuncia por **DHCP**, classe do fabricante e sistema provável.
+- **User-Agent** de requisições HTTP sem criptografia (indica sistema/aparelho).
+- Tipo do aparelho (celular, computador, TV, videogame, casa inteligente…) por
+  heurística; o painel mostra de onde veio o palpite.
+- MAC privado (aleatório) sinalizado; rede interna do HA fica fora da lista.
 
-**NÃO faz (removido de propósito neste build):**
-- ❌ Captura de pacotes (o `scapy` **nem está instalado**)
-- ❌ Interceptação ARP / MITM (impossível, não só desligado)
-- ❌ Ações ativas — inicia em **somente-leitura** (`readonly: true`)
+**Tráfego por dispositivo (só metadados)**
+- **DNS**: nome consultado e tipo (A, AAAA, HTTPS…).
+- **TLS**: nome do site (SNI) em qualquer porta.
+- **HTTP/3 (QUIC)**: início de conexão, com o nome vindo do DNS.
+- **TCP**: toda conexão nova, em qualquer porta, com o serviço provável.
+- **Volume**: bytes enviados e recebidos por conexão TCP, somados por hora, por
+  aparelho e por serviço.
+- **Entrada**: conexão iniciada de fora para um aparelho da casa gera alerta.
 
-> **Limite honesto:** sem espelhamento de porta (SPAN) no switch, o Pi vê o
-> mesmo que o modo PC — inventário, broadcast/multicast e o próprio tráfego.
-> Para ver o tráfego unicast de **todos** os aparelhos, é preciso reposicionar o
-> switch (LAN do roteador) + configurar SPAN. Aí este add-on evolui pro modo
-> completo.
+## Limites honestos
+
+- O conteúdo cifrado **nunca** é lido; só nomes, portas e tamanhos.
+- O volume cobre **apenas TCP** e só entra na conta quando a conexão termina.
+  Vídeo por HTTP/3 (YouTube, parte do Netflix) aparece como conexão, sem volume.
+- Aparelho que usa DNS cifrado (DoH/DoT) não tem as consultas vistas; o nome do
+  site ainda aparece pelo TLS.
+- Tráfego IPv6 é atribuído pelo MAC, e só depois de o aparelho ter sido visto
+  por IPv4.
+- Sem o espelhamento (SPAN) configurado no switch, só há inventário.
 
 ## Segurança
 
-- **Ingress:** o painel é servido dentro do Home Assistant (login do HA); **nenhuma
-  porta extra é aberta** na rede.
-- **Privilégio mínimo:** só `NET_RAW` (para o ping da descoberta). Sem `NET_ADMIN`,
-  sem `privileged`, sem acesso a pastas do host.
-- **Somente-leitura por padrão.** Dados ficam no volume `/data` do add-on (SQLite
-  local, sem nuvem). Ajuste a retenção nas opções.
-
-## Instalação (add-on local)
-
-1. No Home Assistant, instale o add-on **"Samba share"** ou **"Advanced SSH & Web
-   Terminal"** para acessar a pasta `/addons`.
-2. Rode `python build-addon.py` (na pasta `haos-addon/`) para montar o código.
-3. Copie a pasta **`haos-addon/sentinela/`** inteira para **`/addons/sentinela/`**
-   no seu Home Assistant.
-4. Em **Configurações → Add-ons → Loja de Add-ons → ⋮ → Verificar atualizações**.
-   O **Sentinela** aparece em "Add-ons locais".
-5. Abra → **Instalar** → aguarde o build (alguns minutos no Pi).
-6. **Iniciar**. Ative *"Mostrar na barra lateral"*. O painel abre pelo menu do HA.
+- **Ingress:** o painel é servido dentro do Home Assistant (login do HA); nenhuma
+  porta extra é aberta na rede.
+- **Privilégios:** `host_network`, `NET_RAW` (leitura de pacotes) e `NET_ADMIN`
+  (colocar a interface do espelho em modo promíscuo). Sem acesso a pastas do host.
+- A captura é **passiva**: a interface do espelho só recebe cópia, não transmite.
+- Os dados ficam no volume `/data` do add-on (SQLite local, sem nuvem).
+- Alterações no painel (rótulo, confiança) exigem o `admin_token`. **Troque o
+  valor padrão** nas opções do add-on.
 
 ## Opções
 
 | Opção | Padrão | O quê |
 |---|---|---|
-| `readonly` | `true` | Somente-leitura (recomendado; bloqueia ações ativas). |
-| `retention_days` | `30` | Dias de retenção dos registros. |
-| `lan_cidr` | *(vazio)* | Faixa da rede; vazio = detecta sozinho (ex.: `192.168.100.0/24`). |
+| `capture_iface` | `enu1u1` | Interface ligada à porta espelhada do switch. |
+| `lan_cidr` | *(vazio)* | Faixa da rede; vazio = detecta sozinho. |
+| `exclude_macs` | `[]` | MACs fora da captura profunda (continuam no inventário). |
+| `retention_days` | `60` | Retenção desejada (a limpeza automática ainda não foi implementada). |
+| `admin_token` | `1120` | Token para alterações no painel — trocar. |
 
-## Notas
+## Instalação e atualização
 
-- Testado localmente como app; a **primeira instalação no Pi precisa ser validada**
-  (arquitetura, build da imagem). Se algo falhar, o log do add-on mostra o motivo.
-- Para o modo completo (SPAN), fale comigo — envolve mudar a topologia do switch.
+O add-on é instalado a partir do repositório `juniorpedron/sentinela-hassio`
+(Configurações → Add-ons → Loja → Repositórios). Para atualizar: **Verificar
+atualizações** na loja e **Atualizar** no add-on; o log mostra o motivo se o
+build falhar. O filtro de captura novo tem fallback automático para o antigo se
+o Pi o recusar (o painel mostra "filtro rico" ou "filtro básico").

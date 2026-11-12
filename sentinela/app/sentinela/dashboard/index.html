@@ -37,12 +37,16 @@
       </div>
     </div>
     <div class="nr-metricas">
-      <div class="nr-metrica"><span class="nr-num" id="stat-devices">—</span><span class="nr-rot">dispositivos</span></div>
-      <div class="nr-metrica"><span class="nr-num amb" id="stat-unknown">—</span><span class="nr-rot">desconhecidos</span></div>
+      <div class="nr-metrica" title="Vistos nas últimas 24 h / total já visto na rede"><span class="nr-num" id="stat-devices">—</span><span class="nr-rot">ativos 24h</span></div>
+      <div class="nr-metrica" title="Ativos ainda não classificados como confiáveis"><span class="nr-num amb" id="stat-unknown">—</span><span class="nr-rot">desconhecidos</span></div>
+      <div class="nr-metrica" title="Volume medido nas conexões TCP encerradas (não inclui QUIC/UDP)"><span class="nr-num" id="stat-bytes">—</span><span class="nr-rot">tráfego 24h</span></div>
       <div class="nr-metrica"><span class="nr-num" id="stat-dns">—</span><span class="nr-rot">dns / 24h</span></div>
       <div class="nr-metrica"><span class="nr-num" id="stat-events">—</span><span class="nr-rot">eventos / 24h</span></div>
     </div>
   </section>
+
+  <!-- Estado da captura (o que o sensor esta de fato enxergando) -->
+  <div id="captura-bar" class="captura-bar oculto"></div>
 
   <!-- Aviso de LIMITE HONESTO (mostrado apenas no modo PC) -->
   <div id="aviso-limite" class="aviso-limite oculto">
@@ -59,6 +63,12 @@
         <h3>Mapa da rede — dispositivos e conexões</h3>
         <div class="grafo-acoes">
           <span class="grafo-hint">passe o mouse num nó pra ver só as conexões dele · clique num aparelho pra abrir</span>
+          <select id="grafo-janela" class="sel-mini" title="Mostrar aparelhos vistos neste período">
+            <option value="24">vistos em 24 h</option>
+            <option value="168" selected>vistos em 7 dias</option>
+            <option value="720">vistos em 30 dias</option>
+            <option value="8760">todos</option>
+          </select>
           <button id="grafo-atualizar" class="btn-mini">atualizar</button>
         </div>
       </div>
@@ -86,12 +96,12 @@
       <div id="chart" class="chart"><p class="vazio">Carregando…</p></div>
     </div>
     <div class="card">
-      <div class="card-cab"><h3>Top domínios</h3></div>
-      <div id="top-domains" class="top-list"><p class="vazio">Carregando…</p></div>
+      <div class="card-cab"><h3>Quem mais usa — 24h</h3></div>
+      <div id="top-devices" class="top-list"><p class="vazio">Carregando…</p></div>
     </div>
     <div class="card">
-      <div class="card-cab"><h3>Top apps</h3></div>
-      <div id="top-apps" class="top-list"><p class="vazio">Carregando…</p></div>
+      <div class="card-cab"><h3>O que mais é acessado — 24h</h3></div>
+      <div id="top-services" class="top-list"><p class="vazio">Carregando…</p></div>
     </div>
   </section>
 
@@ -104,13 +114,37 @@
     <a href="api/export?kind=events&limit=5000">eventos</a>
   </div>
 
+  <!-- ================= TRÁFEGO IDENTIFICADO ================= -->
+  <section class="trafego-secao">
+    <div class="card" id="painel-trafego">
+      <div class="card-cab">
+        <div class="abas" id="trafego-abas">
+          <button class="aba ativa" data-aba="conexoes">Conexões recentes</button>
+          <button class="aba" data-aba="volume">Volume por serviço — 24h</button>
+          <button class="aba" data-aba="dns">Consultas DNS</button>
+        </div>
+        <div class="trafego-filtros">
+          <select id="trafego-dev" class="sel-mini"><option value="">todos os dispositivos</option></select>
+          <input type="search" id="trafego-busca" class="busca" placeholder="filtrar serviço, site, categoria…" autocomplete="off" />
+        </div>
+      </div>
+      <div class="trafego-wrap"><table class="trafego" id="trafego-tabela"><tbody><tr><td class="vazio">Carregando…</td></tr></tbody></table></div>
+    </div>
+  </section>
+
   <!-- ================= GRID PRINCIPAL ================= -->
   <main class="grid">
     <section class="painel" id="painel-devices">
       <div class="painel-cabecalho">
         <h2>Dispositivos</h2>
         <input type="search" id="busca" class="busca"
-          placeholder="buscar por mac, ip, hostname, fabricante…" autocomplete="off" />
+          placeholder="buscar por nome, ip, mac, fabricante, tipo…" autocomplete="off" />
+      </div>
+      <div class="dev-filtros" id="dev-filtros">
+        <button class="fchip ativa" data-f="ativos">ativos 24h <b id="fc-ativos"></b></button>
+        <button class="fchip" data-f="desconhecidos">não classificados <b id="fc-desconhecidos"></b></button>
+        <button class="fchip" data-f="semnome">sem nome <b id="fc-semnome"></b></button>
+        <button class="fchip" data-f="todos">todos <b id="fc-todos"></b></button>
       </div>
       <div class="lista-devices" id="lista-devices">
         <p class="vazio">Carregando dispositivos…</p>

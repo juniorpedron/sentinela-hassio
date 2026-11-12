@@ -13,6 +13,48 @@ from typing import Optional
 # (substring no host)  ->  (nome amigavel, categoria)
 # A ordem importa: regras mais especificas vem primeiro.
 _RULES: list[tuple[str, tuple[str, str]]] = [
+    # --- jogos / consoles ---
+    ("playstation", ("PlayStation", "Jogos")),
+    ("sonyentertainmentnetwork", ("PlayStation", "Jogos")),
+    ("xboxlive", ("Xbox", "Jogos")),
+    ("nintendo", ("Nintendo", "Jogos")),
+    ("epicgames", ("Epic Games", "Jogos")),
+    ("riotgames", ("Riot Games", "Jogos")),
+    ("roblox", ("Roblox", "Jogos")),
+    # --- streaming / video (BR) ---
+    ("disneyplus", ("Disney+", "Streaming")),
+    ("disney", ("Disney+", "Streaming")),
+    ("hbomax", ("Max (HBO)", "Streaming")),
+    ("primevideo", ("Amazon Prime Video", "Streaming")),
+    ("aiv-cdn", ("Amazon Prime Video", "Streaming")),
+    ("globoplay", ("Globoplay", "Streaming")),
+    ("globo.com", ("Globo", "Streaming")),
+    ("deezer", ("Deezer", "Streaming")),
+    # --- bancos e compras ---
+    ("nubank", ("Nubank", "Bancos")),
+    ("itau", ("Itau", "Bancos")),
+    ("bradesco", ("Bradesco", "Bancos")),
+    ("santander", ("Santander", "Bancos")),
+    ("bb.com.br", ("Banco do Brasil", "Bancos")),
+    ("caixa.gov", ("Caixa", "Bancos")),
+    ("bancointer", ("Inter", "Bancos")),
+    ("mercadolivre", ("Mercado Livre", "Compras")),
+    ("mercadopago", ("Mercado Pago", "Bancos")),
+    ("mercadolibre", ("Mercado Livre", "Compras")),
+    ("shopee", ("Shopee", "Compras")),
+    ("aliexpress", ("AliExpress", "Compras")),
+    # --- reunioes / estudo ---
+    ("zoom.us", ("Zoom", "Mensagens")),
+    ("duolingo", ("Duolingo", "Estudo")),
+    ("notion", ("Notion", "Dev")),
+    ("slack", ("Slack", "Mensagens")),
+    ("discord", ("Discord", "Mensagens")),
+    ("signal.org", ("Signal", "Mensagens")),
+    # --- telemetria ---
+    ("crashlytics", ("Telemetria", "Publicidade")),
+    ("app-measurement", ("Telemetria", "Publicidade")),
+    ("xiaomi", ("Xiaomi", "IoT")),
+    ("smartlife", ("Tuya (casa inteligente)", "IoT")),
     ("anthropic", ("Claude (Anthropic)", "IA")),
     ("claude.ai", ("Claude (Anthropic)", "IA")),
     ("openai", ("ChatGPT (OpenAI)", "IA")),
