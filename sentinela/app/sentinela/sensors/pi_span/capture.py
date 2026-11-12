@@ -31,7 +31,7 @@ import ipaddress
 import logging
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from typing import Optional
 
 log = logging.getLogger("sentinela.pi_capture")
@@ -70,6 +70,7 @@ _CONN_TTL = 6 * 3600      # desiste de uma conexao sem FIN depois disso
 _MAX_NAMES = 50000        # mapa IP -> nome (respostas DNS)
 _DEDUPE_TTL = 3600        # mesma (dispositivo, destino) so vira 1 registro por hora
 _MAX_BPS = 125_000_000    # 1 Gbit/s: teto fisico para validar o volume de uma conexao
+_GRANDE = 200_000_000     # acima disso a conexao entra no diagnostico de volume alto
 
 
 def _fmt_mac(m: Optional[str]) -> Optional[str]:
@@ -180,6 +181,8 @@ class Rastreador:
         self.meta_vista: dict[str, dict] = {}
         self._lock = threading.Lock()
         self._uso: dict[tuple, list] = {}    # (mac, host, proto) -> [up, down, conns]
+        # diagnostico: ultimas conexoes com volume alto (para conferir se a medicao e real)
+        self.grandes: deque = deque(maxlen=25)
         self.stats = {"pacotes": 0, "dns": 0, "tls": 0, "http": 0, "quic": 0, "dhcp": 0,
                       "tcp_novas": 0, "tcp_fechadas": 0, "entrada": 0, "erros": 0}
         # callbacks (definidos pelo run_forever / testes)
@@ -415,6 +418,8 @@ class Rastreador:
             elif mede and not saindo and c["down"] is None and c["isn_s"] is not None:
                 c["down"] = (t.seq - c["isn_s"] - 1) & 0xFFFFFFFF
             if flags & _RST or (c["up"] is not None and c["down"] is not None):
+                c["fim"] = ("RST" if flags & _RST else "FIN") + ("/cliente" if saindo else "/servidor")
+                c["fim_seq"] = int(t.seq)
                 self._fecha(chave, c, agora)
 
     def _fecha(self, chave, c, agora: Optional[float] = None) -> None:
@@ -433,6 +438,12 @@ class Rastreador:
             self.stats["volume_descartado"] = self.stats.get("volume_descartado", 0) + 1
         self.stats["tcp_fechadas"] += 1
         host = c.get("host") or self._nome(chave[2]) or chave[2]
+        if up + down >= _GRANDE:
+            reg = {"host": host, "porta": c.get("dport"), "up": up, "down": down, "dur_s": round(dur, 1),
+                   "fim": c.get("fim", "expirou"), "isn_c": c.get("isn_c"), "isn_s": c.get("isn_s"),
+                   "fim_seq": c.get("fim_seq"), "v6": ":" in str(chave[2])}
+            self.grandes.append(reg)
+            log.info("conexao com volume alto: %s", reg)
         self._soma_uso(chave[0], host, "tcp", up, down, 1)
 
     def _quic(self, pkt, mac, ip, remoto, agora) -> None:
@@ -554,7 +565,7 @@ async def run_forever(storage, settings, controls=None) -> None:
     if controls is not None:
         controls.capture = {"iface": iface, "filtro": modo, "stats": rast.stats,
                             "gateways": rast.gw_macs, "conexoes_abertas": rast.conns,
-                            "nomes_dns": rast.ip_names}
+                            "nomes_dns": rast.ip_names, "grandes": rast.grandes}
 
     log.info(
         "captura SPAN ativa em '%s' (LAN=%s; filtro %s; %d MAC(s) excluido(s) da captura)",

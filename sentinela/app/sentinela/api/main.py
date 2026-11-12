@@ -176,6 +176,7 @@ def create_app(storage, controls=None) -> FastAPI:
             "gateways": len(cap.get("gateways") or ()),
             "conexoes_abertas": len(cap.get("conexoes_abertas") or ()),
             "nomes_dns": len(cap.get("nomes_dns") or ()),
+            "grandes": list(cap.get("grandes") or ()),
         }
 
     # CORS liberado apenas para localhost (dashboard local + WS).
@@ -191,6 +192,15 @@ def create_app(storage, controls=None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # O painel (html/js/css) deve ser sempre revalidado: sem isto o navegador
+    # guarda a versao antiga por dias depois de uma atualizacao do add-on.
+    @app.middleware("http")
+    async def _sem_cache_do_painel(request: Request, call_next):
+        resp = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
     # ---- Rotas /api/* ----------------------------------------------------
 
