@@ -160,6 +160,14 @@ def create_app(storage, controls=None) -> FastAPI:
         linhas.sort(key=lambda r: str(r.get("ts") or ""), reverse=True)
         return linhas[:limit]
 
+    def _interno_ip(host) -> bool:
+        """O destino e um endereco da propria rede (roteador, camera...)? Nao e 'trafego para fora'."""
+        try:
+            ip = ipaddress.ip_address(str(host))
+        except ValueError:
+            return False
+        return ip.is_private or ip.is_link_local or ip.is_multicast or (lan_net is not None and ip in lan_net)
+
     def _servico(host: str | None) -> tuple[str, str]:
         if not host:
             return ("Sem nome", "Desconhecido")
@@ -455,7 +463,7 @@ def create_app(storage, controls=None) -> FastAPI:
                 if ap not in nomes:
                     continue
                 host = r.get(campo) or (r.get("dst_ip") if kind == "flow" else None)
-                if not host or str(host).endswith((".arpa", ".local")):
+                if not host or str(host).endswith((".arpa", ".local")) or _interno_ip(host):
                     continue
                 nome, cat = _servico(host)
                 e = por_ap.setdefault(ap, {"ultimo": t, "svc": {}, "n": 0})
@@ -490,11 +498,16 @@ def create_app(storage, controls=None) -> FastAPI:
             t = _dt(f.get("ts"))
             if t is None or t < corte:
                 continue
-            nome, cat = _servico(f.get("sni") or f.get("dst_ip"))
+            alvo = f.get("sni") or f.get("dst_ip")
+            if not alvo or _interno_ip(alvo):
+                continue
+            nome, cat = _servico(alvo)
             x = c(cat)
             x["conns"] += 1
             x["services"][nome] = x["services"].get(nome, 0) + 1
         for u in await st.usage_by_host(hours=hours, limit=5000):
+            if _interno_ip(u["host"]):
+                continue
             _n, cat = _servico(u["host"])
             c(cat)["bytes"] += (u["bytes_up"] or 0) + (u["bytes_down"] or 0)
         out = []

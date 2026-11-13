@@ -55,6 +55,49 @@ _RULES: list[tuple[str, tuple[str, str]]] = [
     ("app-measurement", ("Telemetria", "Publicidade")),
     ("xiaomi", ("Xiaomi", "IoT")),
     ("smartlife", ("Tuya (casa inteligente)", "IoT")),
+    # --- vistos na rede real em 12/11/2026 ---
+    ("teamviewer", ("TeamViewer (acesso remoto)", "Trabalho")),
+    ("anydesk", ("AnyDesk (acesso remoto)", "Trabalho")),
+    ("autodesk", ("Autodesk", "Trabalho")),
+    ("cursor.sh", ("Cursor (editor)", "Dev")),
+    ("ghcr.io", ("GitHub (imagens)", "Dev")),
+    ("docker", ("Docker", "Dev")),
+    ("nousresearch", ("Nous Research", "IA")),
+    ("perplexity", ("Perplexity", "IA")),
+    ("x.ai", ("Grok (xAI)", "IA")),
+    ("capcut", ("CapCut", "Social")),
+    ("bytedance", ("TikTok / ByteDance", "Social")),
+    ("byteoversea", ("TikTok / ByteDance", "Social")),
+    ("ibytedtos", ("TikTok / ByteDance", "Social")),
+    ("ttwstatic", ("TikTok", "Social")),
+    ("wechat", ("WeChat", "Mensagens")),
+    ("shein", ("Shein", "Compras")),
+    ("susercontent", ("Shopee", "Compras")),
+    ("stripe", ("Stripe (pagamentos)", "Bancos")),
+    ("intercom", ("Intercom (atendimento)", "Trabalho")),
+    ("mailerlite", ("MailerLite", "Trabalho")),
+    ("gvt1", ("Google (atualizacoes)", "Google")),
+    ("gvt2", ("Google (atualizacoes)", "Google")),
+    ("nflxso", ("Netflix", "Streaming")),
+    ("nflxext", ("Netflix", "Streaming")),
+    ("discomax", ("Max (HBO)", "Streaming")),
+    ("lgtvcommon", ("LG TV", "Sistema")),
+    ("lgtvsdp", ("LG TV", "Sistema")),
+    ("lge.com", ("LG TV", "Sistema")),
+    ("alphonso", ("LG TV (medicao de audiencia)", "Publicidade")),
+    ("samsungcloud", ("Samsung Cloud", "Nuvem")),
+    ("samsungapps", ("Samsung", "Sistema")),
+    ("aaplimg", ("Apple", "Apple")),
+    ("apple-dns", ("Apple", "Apple")),
+    ("akadns", ("Akamai (CDN)", "CDN")),
+    ("appsflyer", ("Telemetria", "Publicidade")),
+    ("habackup", ("Home Assistant (backup)", "Sistema")),
+    ("met.no", ("Previsao do tempo (HA)", "Sistema")),
+    ("cdprojektred", ("CD Projekt (jogos)", "Jogos")),
+    ("cdpred", ("CD Projekt (jogos)", "Jogos")),
+    ("ufsc.br", ("UFSC", "Estudo")),
+    ("ufpr.br", ("UFPR", "Estudo")),
+    ("conectiva", ("Conectiva", "Outro")),
     ("anthropic", ("Claude (Anthropic)", "IA")),
     ("claude.ai", ("Claude (Anthropic)", "IA")),
     ("openai", ("ChatGPT (OpenAI)", "IA")),
@@ -173,8 +216,25 @@ def _is_ip(host: str) -> bool:
         return False
 
 
+# Sufixos de dois niveis: em "loja.com.br" o nome e "loja", nao "com".
+_TLD2 = {"com.br", "org.br", "net.br", "gov.br", "edu.br", "jus.br", "mil.br", "art.br", "blog.br",
+         "co.uk", "org.uk", "com.ar", "com.mx", "com.pt", "co.jp", "com.au", "com.cn", "co.in"}
+
+# Enderecos conhecidos que aparecem sem nome.
+_IPS_CONHECIDOS = {
+    "1.1.1.1": ("Cloudflare DNS", "Sistema"), "1.0.0.1": ("Cloudflare DNS", "Sistema"),
+    "8.8.8.8": ("Google DNS", "Sistema"), "8.8.4.4": ("Google DNS", "Sistema"),
+    "9.9.9.9": ("Quad9 DNS", "Sistema"),
+    "2606:4700:4700::1111": ("Cloudflare DNS", "Sistema"), "2001:4860:4860::8888": ("Google DNS", "Sistema"),
+    "2804:14d:1:0:181:213:132:4": ("DNS da Claro", "Sistema"),
+    "2804:14d:1:0:181:213:132:5": ("DNS da Claro", "Sistema"),
+}
+
+
 def _registrable(host: str) -> str:
     parts = host.split(".")
+    if len(parts) >= 3 and ".".join(parts[-2:]) in _TLD2:
+        return ".".join(parts[-3:])
     return ".".join(parts[-2:]) if len(parts) >= 2 else host
 
 
@@ -184,7 +244,7 @@ def friendly(host: Optional[str]) -> tuple[str, str]:
         return ("Desconhecido", _CAT_DEFAULT)
     h = host.lower().strip().rstrip(".")
     if _is_ip(h):
-        return (f"IP {host}", "Desconhecido")
+        return _IPS_CONHECIDOS.get(h, (f"IP {host}", "Sem nome"))
     for chave, (nome, cat) in _RULES:
         if chave in h:
             return (nome, cat)

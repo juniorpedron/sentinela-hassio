@@ -495,3 +495,22 @@ body[data-view="dispositivos"] .lista-devices { grid-template-columns: repeat(au
 .captura-det .captura-bar { margin: 0; border: 0; border-top: 1px solid var(--linha); border-radius: 0 0 10px 10px; background: transparent; }
 .chk { font-size: 11px; color: var(--txt-fraco); display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .chk input { accent-color: var(--teal); }
+
+/* ================= v0.4.1 — mapa em fluxo ================= */
+.fluxo-wrap { padding: 10px 14px 16px; }
+.fluxo-legenda { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 4px 6px 10px; font-size: 11.5px; color: var(--txt-fraco); }
+.fx-leg { display: inline-flex; align-items: center; gap: 5px; }
+.fx-leg .dot { border-radius: 50%; margin: 0; }
+.fluxo { overflow-x: auto; }
+.fluxo-svg { width: 100%; min-width: 760px; height: auto; display: block; }
+.fx-cab { font-family: var(--mono); font-size: 9px; letter-spacing: 1.5px; fill: var(--txt-mudo); }
+.fx-txt { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--txt); }
+.fx-sub { font-family: var(--mono); font-size: 9.5px; fill: var(--txt-mudo); }
+.fx-link { opacity: .32; transition: opacity .12s; }
+.fx-no { cursor: pointer; transition: opacity .12s; }
+.fx-no:hover .fx-txt { fill: var(--teal); }
+.com-foco .fx-link { opacity: .05; }
+.com-foco .fx-link.ativo { opacity: .85; }
+.fx-no.apagado { opacity: .25; }
+#mapa-modo .aba { padding: 4px 10px; font-size: 10.5px; }
+body[data-view="mapa"] .fluxo-svg { max-height: none; }

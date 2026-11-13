@@ -33,7 +33,7 @@ const estado = {
   devices: [], filtro: "", selecionado: null, modo: "pc",
   filtrosFeed: { device: true, dns: true, flow: true, event: true },
   filtroDev: "ativos", aba: "conexoes", trafego: { conexoes: [], volume: [], dns: [] },
-  trafegoDev: "", trafegoBusca: "", grafoHoras: 168, view: "geral",
+  trafegoDev: "", trafegoBusca: "", grafoHoras: 168, view: "geral", mapaModo: "fluxo", grafo: null,
 };
 
 // ----------------------- navegação por seções -----------------------
@@ -46,7 +46,7 @@ function mostrarView(v) {
     n.classList.toggle("fora-da-view", some);
   });
   document.body.dataset.view = v;
-  if (v === "mapa") { if (!GV.ctx) carregarGrafo(); else { gvResize(); gvFit(); gvDraw(); } }
+  if (v === "mapa") { if (!estado.grafo) carregarGrafo(); else desenharMapa(); }
   window.scrollTo(0, 0);
 }
 
@@ -84,7 +84,7 @@ const CAT_COR = {
   IA: "#a78bfa", Google: "#60a5fa", Microsoft: "#2dd4bf", Apple: "#cbd5e1",
   Social: "#f472b6", Mensagens: "#4ade80", Streaming: "#fb7185", Busca: "#818cf8",
   Nuvem: "#fbbf24", Infra: "#fbbf24", CDN: "#fbbf24", Publicidade: "#ef4444",
-  Dev: "#38bdf8", Jogos: "#f59e0b", Bancos: "#34d399", Compras: "#fb923c", Estudo: "#c084fc", IoT: "#22d3ee", Sistema: "#94a3b8", Desconhecido: "#64748b", Outro: "#64748b",
+  Dev: "#38bdf8", Jogos: "#f59e0b", Bancos: "#34d399", Compras: "#fb923c", Estudo: "#c084fc", Trabalho: "#5eead4", "Sem nome": "#64748b", IoT: "#22d3ee", Sistema: "#94a3b8", Desconhecido: "#64748b", Outro: "#64748b",
 };
 const TRUST_COR = { trusted: "#3ecf8e", unknown: "#f6b13f", quarantine: "#f2555f" };
 
@@ -496,9 +496,91 @@ async function carregarGrafo() {
   if (estado.view !== "mapa") return;
   try {
     const data = await apiGet("/api/graph?limit=40&hours=" + estado.grafoHoras);
-    if (!GV.ctx) gvInit();
-    gvSetData(data);
+    estado.grafo = data;
+    desenharMapa();
   } catch (e) { console.error("grafo", e); }
+}
+
+function desenharMapa() {
+  const data = estado.grafo; if (!data) return;
+  const fluxo = estado.mapaModo === "fluxo";
+  const fw = $("#fluxo-wrap"), gw = $("#grafo-wrap");
+  if (fw) fw.classList.toggle("oculto", !fluxo);
+  if (gw) gw.classList.toggle("oculto", fluxo);
+  const hint = $("#grafo-hint");
+  if (hint) hint.textContent = fluxo ? "espessura = nº de conexões · passe o mouse para destacar · clique para abrir"
+    : "passe o mouse num nó pra ver só as conexões dele · clique num aparelho pra abrir";
+  if (fluxo) { renderFluxo(data); return; }
+  if (!GV.ctx) gvInit(); else gvResize();
+  gvSetData(data); gvFit(); gvDraw();
+}
+
+// ----------------------- mapa em FLUXO (aparelho -> serviço) -----------------------
+// Duas colunas: aparelhos à esquerda, serviços à direita. Cada faixa liga um
+// aparelho a um serviço; a espessura é o número de conexões registradas.
+function renderFluxo(data) {
+  const host = $("#fluxo"); if (!host) return;
+  const byId = {}; (data.nodes || []).forEach((n) => { byId[n.id] = n; });
+  let links = (data.edges || []).filter((e) => byId[e.source] && byId[e.target] && byId[e.source].kind === "device" && byId[e.target].kind === "service");
+  if (!links.length) { host.innerHTML = '<p class="vazio">Ainda não há conexões identificadas neste período.</p>'; $("#fluxo-legenda").innerHTML = ""; return; }
+  const soma = (lado) => { const m = {}; links.forEach((l) => { m[l[lado]] = (m[l[lado]] || 0) + l.weight; }); return m; };
+  const MAXD = 14, MAXS = 16;
+  const topIds = (m, n) => Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n).map((x) => x[0]);
+  const devIds = new Set(topIds(soma("source"), MAXD));
+  links = links.filter((l) => devIds.has(l.source));
+  const svcIds = new Set(topIds(soma("target"), MAXS));
+  const ocultos = links.filter((l) => !svcIds.has(l.target)).reduce((a, l) => a + l.weight, 0);
+  links = links.filter((l) => svcIds.has(l.target));
+  const wd = soma("source"), ws = soma("target");
+  // serviços agrupados por categoria (cores vizinhas ficam juntas)
+  const devs = Object.keys(wd).sort((a, b) => wd[b] - wd[a]);
+  const svcs = Object.keys(ws).sort((a, b) => (byId[a].category || "").localeCompare(byId[b].category || "") || ws[b] - ws[a]);
+  const total = links.reduce((a, l) => a + l.weight, 0);
+  const W = 1000, GAP = 7, MINH = 16, XL = 270, XR = 730, BW = 12;
+  const H = Math.max(420, Math.max(devs.length, svcs.length) * 30 + 40);
+  const escala = (ids, w) => { const livre = H - 30 - GAP * (ids.length - 1); const k = livre / Math.max(1, total);
+    const hs = ids.map((i) => Math.max(MINH, w[i] * k)); const f = Math.min(1, livre / hs.reduce((a, b) => a + b, 0)); return hs.map((x) => x * f); };
+  const pos = {};
+  const coloca = (ids, w) => { const hs = escala(ids, w); let y = 15; ids.forEach((id, i) => { pos[id] = { y, h: hs[i], usado: 0, w: w[id] }; y += hs[i] + GAP; }); };
+  coloca(devs, wd); coloca(svcs, ws);
+  links.sort((a, b) => pos[a.source].y - pos[b.source].y || pos[a.target].y - pos[b.target].y);
+  const faixas = links.map((l) => {
+    const a = pos[l.source], b = pos[l.target];
+    const ha = (l.weight / a.w) * a.h, hb = (l.weight / b.w) * b.h;
+    const y1 = a.y + a.usado + ha / 2, y2 = b.y + b.usado + hb / 2; a.usado += ha; b.usado += hb;
+    const cor = corCat(byId[l.target].category), esp = Math.max(1.2, Math.min(ha, hb));
+    const mx = (XL + BW + XR) / 2;
+    return `<path class="fx-link" data-s="${esc(l.source)}" data-t="${esc(l.target)}" d="M${XL + BW},${y1.toFixed(1)} C${mx},${y1.toFixed(1)} ${mx},${y2.toFixed(1)} ${XR},${y2.toFixed(1)}" stroke="${cor}" stroke-width="${esp.toFixed(1)}" fill="none"><title>${esc(byId[l.source].label)} → ${esc(byId[l.target].label)}: ${l.weight} conexões</title></path>`;
+  }).join("");
+  const corta = (t, n) => (t.length > n ? t.slice(0, n - 1) + "…" : t);
+  const nosD = devs.map((id) => { const n = byId[id], p = pos[id], cy = p.y + p.h / 2;
+    return `<g class="fx-no" data-id="${esc(id)}" data-lado="s"><rect x="${XL}" y="${p.y.toFixed(1)}" width="${BW}" height="${p.h.toFixed(1)}" rx="3" fill="${TRUST_COR[n.trust_state] || "#8aa0b6"}"/>
+      <text x="${XL - 10}" y="${(cy + 4).toFixed(1)}" text-anchor="end" class="fx-txt">${esc(corta(n.label, 30))} ${KIND_ICON[n.device_kind] || ""}</text>
+      <text x="${XL - 10}" y="${(cy + 16).toFixed(1)}" text-anchor="end" class="fx-sub">${p.h > 26 ? wd[id] + " conexões" : ""}</text><title>${esc(n.label)} · ${wd[id]} conexões · clique para abrir</title></g>`; }).join("");
+  const nosS = svcs.map((id) => { const n = byId[id], p = pos[id], cy = p.y + p.h / 2, cor = corCat(n.category);
+    return `<g class="fx-no" data-id="${esc(id)}" data-lado="t"><rect x="${XR}" y="${p.y.toFixed(1)}" width="${BW}" height="${p.h.toFixed(1)}" rx="3" fill="${cor}"/>
+      <text x="${XR + BW + 10}" y="${(cy + 4).toFixed(1)}" class="fx-txt">${esc(corta(n.label, 30))}</text>
+      <text x="${XR + BW + 10}" y="${(cy + 16).toFixed(1)}" class="fx-sub">${p.h > 26 ? esc(n.category || "") + " · " + ws[id] : ""}</text><title>${esc(n.label)} · ${esc(n.category || "")} · ${ws[id]} conexões · clique para ver no tráfego</title></g>`; }).join("");
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="fluxo-svg" preserveAspectRatio="xMidYMin meet">
+      <text x="${XL + BW}" y="9" text-anchor="end" class="fx-cab">APARELHOS</text><text x="${XR}" y="9" class="fx-cab">SERVIÇOS</text>
+      <g class="fx-links">${faixas}</g>${nosD}${nosS}</svg>`;
+  const cats = [...new Set(svcs.map((id) => byId[id].category || "Outro"))];
+  $("#fluxo-legenda").innerHTML = cats.map((c) => `<span class="fx-leg"><i class="dot" style="background:${corCat(c)}"></i>${esc(c)}</span>`).join("") +
+    `<span class="fx-leg mudo">${devs.length} aparelhos · ${svcs.length} serviços · ${total} conexões${ocultos ? " · " + ocultos + " em serviços menores não mostrados" : ""}</span>`;
+  const svg = host.querySelector("svg");
+  const foco = (id, lado) => { svg.classList.toggle("com-foco", !!id);
+    svg.querySelectorAll(".fx-link").forEach((l) => l.classList.toggle("ativo", !!id && l.dataset[lado] === id));
+    svg.querySelectorAll(".fx-no").forEach((n) => { const meu = n.dataset.id === id; let ligado = false;
+      if (id && !meu) ligado = [...svg.querySelectorAll(".fx-link.ativo")].some((l) => l.dataset.s === n.dataset.id || l.dataset.t === n.dataset.id);
+      n.classList.toggle("apagado", !!id && !meu && !ligado); }); };
+  svg.querySelectorAll(".fx-no").forEach((n) => {
+    n.addEventListener("mouseenter", () => foco(n.dataset.id, n.dataset.lado));
+    n.addEventListener("mouseleave", () => foco(null));
+    n.addEventListener("click", () => {
+      if (n.dataset.lado === "s") { abrirDetalhe(n.dataset.id); return; }
+      const nome = byId[n.dataset.id].label; estado.aba = "conexoes"; estado.trafegoBusca = nome; $("#trafego-busca").value = nome; marcarAba(); mostrarView("trafego"); renderTrafego();
+    });
+  });
 }
 
 function mostrarNo(n) {
@@ -934,6 +1016,10 @@ const _FRULES = [
   ["googlevideo", "YouTube", "Streaming"], ["youtube", "YouTube", "Streaming"], ["ytimg", "YouTube", "Streaming"],
   ["netflix", "Netflix", "Streaming"], ["nflxvideo", "Netflix", "Streaming"], ["spotify", "Spotify", "Streaming"], ["twitch", "Twitch", "Streaming"],
   ["whatsapp", "WhatsApp", "Mensagens"], ["telegram", "Telegram", "Mensagens"],
+  ["teamviewer", "TeamViewer", "Trabalho"], ["autodesk", "Autodesk", "Trabalho"], ["cursor.sh", "Cursor", "Dev"], ["capcut", "CapCut", "Social"],
+  ["wechat", "WeChat", "Mensagens"], ["shein", "Shein", "Compras"], ["stripe", "Stripe", "Bancos"], ["gvt1", "Google", "Google"],
+  ["nflxso", "Netflix", "Streaming"], ["lgtv", "LG TV", "Sistema"], ["lge.com", "LG TV", "Sistema"], ["samsungcloud", "Samsung Cloud", "Nuvem"],
+  ["aaplimg", "Apple", "Apple"], ["apple-dns", "Apple", "Apple"], ["akadns", "Akamai", "CDN"],
   ["playstation", "PlayStation", "Jogos"], ["xboxlive", "Xbox", "Jogos"], ["nintendo", "Nintendo", "Jogos"], ["roblox", "Roblox", "Jogos"],
   ["disney", "Disney+", "Streaming"], ["hbomax", "Max (HBO)", "Streaming"], ["primevideo", "Prime Video", "Streaming"], ["globo", "Globo", "Streaming"], ["deezer", "Deezer", "Streaming"],
   ["nubank", "Nubank", "Bancos"], ["itau", "Itaú", "Bancos"], ["bradesco", "Bradesco", "Bancos"], ["santander", "Santander", "Bancos"], ["mercadopago", "Mercado Pago", "Bancos"],
@@ -956,7 +1042,8 @@ function friendlyJS(host) {
   for (const [k, n, c] of _FRULES) if (h.includes(k)) return { name: n, cat: c };
   if (ehIP) return { name: "IP " + host, cat: "Desconhecido" };
   const parts = h.split(".");
-  const reg = parts.length >= 2 ? parts[parts.length - 2] : h;
+  const tld2 = parts.length >= 3 && /^(com|org|net|gov|edu|jus|co)$/.test(parts[parts.length - 2]) && parts[parts.length - 1].length === 2;
+  const reg = tld2 ? parts[parts.length - 3] : (parts.length >= 2 ? parts[parts.length - 2] : h);
   return { name: reg.charAt(0).toUpperCase() + reg.slice(1), cat: "Outro" };
 }
 function hostValido(h) { if (!h) return false; const x = String(h).toLowerCase(); if (x.includes(":")) return false; if (/^[0-9.]+$/.test(x)) return false; if (!x.includes(".")) return false; if (x.endsWith(".arpa") || x.endsWith(".local") || x.endsWith(".home") || x.endsWith(".lan")) return false; return true; }
@@ -1105,6 +1192,14 @@ function init() {
   try { vInicial = localStorage.getItem("sentinela_view") || "geral"; } catch (e) {}
   if (!document.querySelector(`#nav-views [data-view="${vInicial}"]`)) vInicial = "geral";
   mostrarView(vInicial);
+  document.querySelectorAll("#mapa-modo .aba").forEach((b) => b.addEventListener("click", () => {
+    estado.mapaModo = b.dataset.modo;
+    try { localStorage.setItem("sentinela_mapa", estado.mapaModo); } catch (e) {}
+    document.querySelectorAll("#mapa-modo .aba").forEach((x) => x.classList.toggle("ativa", x === b));
+    desenharMapa();
+  }));
+  try { const mm = localStorage.getItem("sentinela_mapa"); if (mm === "constelacao" || mm === "fluxo") estado.mapaModo = mm; } catch (e) {}
+  document.querySelectorAll("#mapa-modo .aba").forEach((x) => x.classList.toggle("ativa", x.dataset.modo === estado.mapaModo));
   const gj = $("#grafo-janela");
   if (gj) gj.addEventListener("change", () => { estado.grafoHoras = parseInt(gj.value, 10) || 168; carregarGrafo(); });
   document.querySelectorAll("#dev-filtros .fchip").forEach((b) => b.addEventListener("click", () => {

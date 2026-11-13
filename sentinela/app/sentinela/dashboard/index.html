@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sentinela — Monitor de Rede</title>
-  <link rel="stylesheet" href="styles.css?v=0.4.0" />
+  <link rel="stylesheet" href="styles.css?v=0.4.1" />
 </head>
 <body>
   <!-- ================= CABECALHO ================= -->
@@ -91,9 +91,13 @@
   <section class="grafo-secao" data-views="mapa">
     <div class="card">
       <div class="card-cab">
-        <h3>Mapa da rede — dispositivos e conexões</h3>
+        <h3>Mapa da rede — quem acessa o quê</h3>
         <div class="grafo-acoes">
-          <span class="grafo-hint">passe o mouse num nó pra ver só as conexões dele · clique num aparelho pra abrir</span>
+          <div class="abas" id="mapa-modo">
+            <button class="aba ativa" data-modo="fluxo" title="Aparelhos à esquerda, serviços à direita; a espessura é a quantidade de conexões">Fluxo</button>
+            <button class="aba" data-modo="constelacao" title="Visão radial com todos os aparelhos e serviços">Constelação</button>
+          </div>
+          <span class="grafo-hint" id="grafo-hint">passe o mouse para destacar · clique para abrir</span>
           <select id="grafo-janela" class="sel-mini" title="Mostrar aparelhos vistos neste período">
             <option value="24">vistos em 24 h</option>
             <option value="168" selected>vistos em 7 dias</option>
@@ -103,7 +107,11 @@
           <button id="grafo-atualizar" class="btn-mini">atualizar</button>
         </div>
       </div>
-      <div class="grafo-wrap">
+      <div class="fluxo-wrap" id="fluxo-wrap">
+        <div class="fluxo-legenda" id="fluxo-legenda"></div>
+        <div id="fluxo" class="fluxo"><p class="vazio">Carregando…</p></div>
+      </div>
+      <div class="grafo-wrap oculto" id="grafo-wrap">
         <canvas id="grafo-canvas" class="grafo-canvas"></canvas>
         <div class="grafo-ctrl" id="grafo-ctrl">
           <div class="gc-tit mono">ajustes</div>
@@ -230,6 +238,6 @@
     <div class="detalhe-corpo" id="detalhe-corpo"></div>
   </aside>
 
-  <script src="app.js?v=0.4.0"></script>
+  <script src="app.js?v=0.4.1"></script>
 </body>
 </html>
