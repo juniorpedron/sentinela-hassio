@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sentinela — Monitor de Rede</title>
-  <link rel="stylesheet" href="styles.css?v=0.3.3" />
+  <link rel="stylesheet" href="styles.css?v=0.4.0" />
 </head>
 <body>
   <!-- ================= CABECALHO ================= -->
@@ -49,12 +49,27 @@
       <div class="nr-metrica" title="Ativos ainda não classificados como confiáveis"><span class="nr-num amb" id="stat-unknown">—</span><span class="nr-rot">desconhecidos</span></div>
       <div class="nr-metrica" title="Volume medido nas conexões TCP encerradas (não inclui QUIC/UDP)"><span class="nr-num" id="stat-bytes">—</span><span class="nr-rot">tráfego 24h</span></div>
       <div class="nr-metrica"><span class="nr-num" id="stat-dns">—</span><span class="nr-rot">dns / 24h</span></div>
-      <div class="nr-metrica"><span class="nr-num" id="stat-events">—</span><span class="nr-rot">eventos / 24h</span></div>
+      <div class="nr-metrica" title="Avisos que merecem atenção (conexões vindas de fora etc.); descobertas de rotina não contam"><span class="nr-num" id="stat-events">—</span><span class="nr-rot">alertas / 24h</span></div>
     </div>
   </section>
 
-  <!-- Estado da captura (o que o sensor esta de fato enxergando) -->
-  <div id="captura-bar" class="captura-bar oculto" data-views="geral trafego"></div>
+  <!-- O QUE IMPORTA + AGORA NA REDE -->
+  <section class="painel-duplo" data-views="geral">
+    <div class="card">
+      <div class="card-cab"><h3>O que merece atenção</h3></div>
+      <div class="insights" id="resumo-insights"><p class="vazio">Avaliando…</p></div>
+    </div>
+    <div class="card">
+      <div class="card-cab"><h3>Agora na rede</h3>
+        <select id="agora-janela" class="sel-mini" title="Janela de tempo">
+          <option value="5">últimos 5 min</option>
+          <option value="15" selected>últimos 15 min</option>
+          <option value="60">última hora</option>
+        </select>
+      </div>
+      <div class="agora" id="agora-lista"><p class="vazio">Carregando…</p></div>
+    </div>
+  </section>
 
   <!-- Novos na rede (primeira vez nas ultimas 48 h) -->
   <section class="novos-secao oculto" id="novos-secao" data-views="geral">
@@ -106,10 +121,14 @@
   <section class="resumo" data-views="geral">
     <div class="card card-chart">
       <div class="card-cab">
-        <h3>Atividade — 24h</h3>
-        <span class="legenda"><i class="dot dot-teal"></i>conexões <i class="dot dot-amb"></i>dns</span>
+        <h3>Atividade por hora — 24h</h3>
+        <span class="legenda"><i class="dot dot-teal"></i>conexões <i class="dot dot-amb"></i>consultas de nome</span>
       </div>
       <div id="chart" class="chart"><p class="vazio">Carregando…</p></div>
+    </div>
+    <div class="card card-cats">
+      <div class="card-cab"><h3>Para onde vai o tráfego — 24h</h3></div>
+      <div id="cats" class="top-list"><p class="vazio">Carregando…</p></div>
     </div>
     <div class="card">
       <div class="card-cab"><h3>Quem mais usa — 24h</h3></div>
@@ -129,6 +148,24 @@
     <a href="api/export?kind=dns&limit=5000">dns</a>
     <a href="api/export?kind=events&limit=5000">eventos</a>
   </div>
+
+  <!-- Saude da captura (detalhe tecnico, recolhido) -->
+  <details class="captura-det" data-views="geral trafego">
+    <summary>Saúde da captura <span id="captura-resumo" class="mudo"></span></summary>
+    <div id="captura-bar" class="captura-bar"></div>
+  </details>
+
+  <!-- ================= ALERTAS E EVENTOS ================= -->
+  <section class="trafego-secao" data-views="eventos">
+    <div class="card">
+      <div class="card-cab"><h3>Alertas e eventos</h3>
+        <div class="trafego-filtros">
+          <label class="mono chk"><input type="checkbox" id="ev-rotina" /> incluir rotina (descobertas)</label>
+        </div>
+      </div>
+      <div class="trafego-wrap"><table class="trafego" id="eventos-tabela"><tbody><tr><td class="vazio">Carregando…</td></tr></tbody></table></div>
+    </div>
+  </section>
 
   <!-- ================= TRÁFEGO IDENTIFICADO ================= -->
   <section class="trafego-secao" data-views="trafego">
@@ -193,6 +230,6 @@
     <div class="detalhe-corpo" id="detalhe-corpo"></div>
   </aside>
 
-  <script src="app.js?v=0.3.3"></script>
+  <script src="app.js?v=0.4.0"></script>
 </body>
 </html>

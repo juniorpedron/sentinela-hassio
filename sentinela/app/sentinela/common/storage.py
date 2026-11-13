@@ -213,6 +213,10 @@ class Storage:
         """{device_id: {flows, dns, last_flow, last_dns}} na janela."""
         return {}
 
+    async def usage_by_hour(self, hours: int = 24) -> dict:
+        """{bucket 'YYYY-MM-DDTHH': bytes} na janela."""
+        return {}
+
 
 # ====================================================================== #
 # Implementacao Postgres / TimescaleDB (modo Pi)
@@ -962,6 +966,14 @@ class SqliteStorage(Storage):
             "ORDER BY sum(bytes_up) + sum(bytes_down) DESC LIMIT ?",
             (cut, limit),
         )
+
+    async def usage_by_hour(self, hours: int = 24) -> dict:
+        rows = await self._fetchall(
+            "SELECT bucket, sum(bytes_up) + sum(bytes_down) AS total FROM usage "
+            "WHERE bucket >= ? GROUP BY bucket",
+            (self._cutoff_bucket(hours),),
+        )
+        return {r["bucket"]: r["total"] or 0 for r in rows}
 
     async def activity_by_device(self, hours: int = 24) -> dict:
         from datetime import timedelta

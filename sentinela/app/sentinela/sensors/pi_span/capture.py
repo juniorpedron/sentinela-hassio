@@ -369,6 +369,8 @@ class Rastreador:
                             self.emit_flow(mac=mac, ip=ip, dst_ip=remoto, dst_port=rport,
                                            proto="tcp", sni=host,
                                            app_proto=_PORT_APP.get(rport, f"tcp/{rport}"))
+                elif self._is_lan(remoto) or str(remoto).lower().startswith("fe80"):
+                    pass                   # vizinho da propria rede (ex.: o roteador lendo UPnP da TV): nao e entrada
                 else:                      # alguem de FORA abrindo conexao para dentro
                     self.stats["entrada"] += 1
                     if self.dd_in.novo((mac, lport), agora):

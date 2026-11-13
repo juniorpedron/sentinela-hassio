@@ -75,7 +75,7 @@ _UA_RULES: list[tuple[str, str, str]] = [
     (r"android", "phone", "Android"),
     (r"windows nt", "computer", "Windows"),
     (r"mac os x|macintosh|darwin", "computer", "macOS"),
-    (r"cros", "computer", "ChromeOS"),
+    (r"\bcros\b", "computer", "ChromeOS"),   # com limite de palavra: sem isso casava com Mi-cros-oft
     (r"linux", "computer", "Linux"),
 ]
 

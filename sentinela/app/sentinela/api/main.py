@@ -317,6 +317,13 @@ def create_app(storage, controls=None) -> FastAPI:
                 for d in top_dev[:10] if d["capturado"]
             ],
             "top_services": top_svc[:12],
+            "alerts_24h": len([
+                e for e in await app.state.storage.list_events(severity="warning", limit=500)
+                if str(e.get("ts")) > (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            ]) + len([
+                e for e in await app.state.storage.list_events(severity="critical", limit=500)
+                if str(e.get("ts")) > (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            ]),
             "capture": _captura(),
         }
 
@@ -409,8 +416,158 @@ def create_app(storage, controls=None) -> FastAPI:
 
     @app.get("/api/timeline")
     async def timeline(hours: int = Query(default=24, ge=1, le=168)) -> list[dict]:
-        """Serie temporal por hora (flows/dns/eventos) para o grafico."""
-        return await app.state.storage.timeline(hours=hours)
+        """Serie temporal por hora (flows/dns/eventos/bytes) para o grafico."""
+        linhas = await app.state.storage.timeline(hours=hours)
+        vol = await app.state.storage.usage_by_hour(hours=hours)
+        vistos = {l["bucket"] for l in linhas}
+        for b in vol:
+            if b not in vistos:
+                linhas.append({"bucket": b, "flows": 0, "dns": 0, "events": 0})
+        for l in linhas:
+            l["bytes"] = vol.get(l["bucket"], 0)
+        linhas.sort(key=lambda l: l["bucket"])
+        return linhas
+
+    def _dt(v) -> datetime | None:
+        try:
+            d = datetime.fromisoformat(str(v))
+        except (ValueError, TypeError):
+            return None
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+    @app.get("/api/now")
+    async def now(minutes: int = Query(default=15, ge=1, le=240)) -> dict:
+        """Quem esta fazendo o que AGORA: aparelhos com atividade nos ultimos minutos."""
+        st = app.state.storage
+        corte = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+        nomes = {d["id"]: d for d in await _devices()}
+        _ap, mapa = await _grupos()
+        por_ap: dict = {}
+        for kind, linhas, campo in (
+            ("flow", await st.recent_flows(limit=1500), "sni"),
+            ("dns", await st.recent_dns(limit=1500), "qname"),
+        ):
+            for r in linhas:
+                t = _dt(r.get("ts"))
+                if t is None or t < corte:
+                    continue
+                ap = mapa.get(r.get("device_id"), r.get("device_id"))
+                if ap not in nomes:
+                    continue
+                host = r.get(campo) or (r.get("dst_ip") if kind == "flow" else None)
+                if not host or str(host).endswith((".arpa", ".local")):
+                    continue
+                nome, cat = _servico(host)
+                e = por_ap.setdefault(ap, {"ultimo": t, "svc": {}, "n": 0})
+                e["n"] += 1
+                e["ultimo"] = max(e["ultimo"], t)
+                sv = e["svc"].setdefault(nome, {"name": nome, "category": cat, "count": 0, "conexao": False})
+                sv["count"] += 1
+                sv["conexao"] = sv["conexao"] or kind == "flow"
+        saida = []
+        for ap, e in por_ap.items():
+            d = nomes[ap]
+            svcs = sorted(e["svc"].values(), key=lambda x: (x["conexao"], x["count"]), reverse=True)
+            # servicos de sistema ficam por ultimo: o que interessa e o que a pessoa esta usando
+            svcs.sort(key=lambda x: x["category"] in ("Sistema", "Infra", "CDN", "Publicidade", "Desconhecido", "Outro"))
+            saida.append({"id": ap, "name": d["display_name"], "kind": d["kind"], "trust_state": d.get("trust_state"),
+                          "last": e["ultimo"].isoformat(), "registros": e["n"], "services": svcs[:6],
+                          "mais": max(0, len(svcs) - 6)})
+        saida.sort(key=lambda x: x["registros"], reverse=True)
+        return {"minutes": minutes, "devices": saida}
+
+    @app.get("/api/categories")
+    async def categories(hours: int = Query(default=24, ge=1, le=720)) -> list[dict]:
+        """Para onde vai o trafego: conexoes e volume por categoria de servico."""
+        st = app.state.storage
+        corte = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cats: dict = {}
+
+        def c(nome: str) -> dict:
+            return cats.setdefault(nome, {"category": nome, "conns": 0, "bytes": 0, "services": {}})
+
+        for f in await st.recent_flows(limit=5000):
+            t = _dt(f.get("ts"))
+            if t is None or t < corte:
+                continue
+            nome, cat = _servico(f.get("sni") or f.get("dst_ip"))
+            x = c(cat)
+            x["conns"] += 1
+            x["services"][nome] = x["services"].get(nome, 0) + 1
+        for u in await st.usage_by_host(hours=hours, limit=5000):
+            _n, cat = _servico(u["host"])
+            c(cat)["bytes"] += (u["bytes_up"] or 0) + (u["bytes_down"] or 0)
+        out = []
+        for x in cats.values():
+            top = sorted(x["services"].items(), key=lambda kv: kv[1], reverse=True)[:4]
+            out.append({"category": x["category"], "conns": x["conns"], "bytes": x["bytes"],
+                        "top": [k for k, _v in top]})
+        out.sort(key=lambda x: x["conns"], reverse=True)
+        return out
+
+    @app.get("/api/insights")
+    async def insights() -> list[dict]:
+        """O que merece atencao, em frases curtas. sev: ok | info | warn | alert."""
+        st = app.state.storage
+        devs = await _devices()
+        ativos = [d for d in devs if d["active"]]
+        itens: list[dict] = []
+
+        quarentena = [d for d in devs if d.get("trust_state") == "quarantine" and d["active"]]
+        if quarentena:
+            itens.append({"sev": "alert", "title": f"{len(quarentena)} aparelho(s) em quarentena estão ativos",
+                          "text": ", ".join(d["display_name"] for d in quarentena[:4]), "view": "dispositivos"})
+
+        corte = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        entradas = [e for e in await st.list_events(severity="warning", limit=500)
+                    if e.get("type") == "inbound.tcp" and str(e.get("ts")) > corte]
+        if entradas:
+            alvos = sorted({nomes_ev for nomes_ev in (
+                next((d["display_name"] for d in devs if any(m["id"] == e.get("device_id") for m in d["members"])), None)
+                for e in entradas) if nomes_ev})
+            itens.append({"sev": "warn", "title": f"{len(entradas)} tentativa(s) de conexão vindas de fora em 24 h",
+                          "text": "Alvo: " + (", ".join(alvos[:4]) or "?") + ". Normalmente o roteador bloqueia; vale conferir se não é esperado.",
+                          "view": "eventos"})
+
+        novos = [d for d in ativos if d["novo"] and (d.get("trust_state") or "unknown") == "unknown"]
+        if novos:
+            itens.append({"sev": "warn", "title": f"{len(novos)} aparelho(s) novo(s) ainda sem classificação",
+                          "text": ", ".join(d["display_name"] for d in novos[:4]) + ". Abra e diga se é confiável.",
+                          "view": "dispositivos"})
+
+        desconhecidos = [d for d in ativos if (d.get("trust_state") or "unknown") == "unknown" and not d["novo"]]
+        if desconhecidos:
+            itens.append({"sev": "info", "title": f"{len(desconhecidos)} aparelho(s) antigo(s) sem classificação",
+                          "text": ", ".join(d["display_name"] for d in desconhecidos[:5]), "view": "dispositivos"})
+
+        com_vol = sorted(devs, key=lambda d: d["bytes_up"] + d["bytes_down"], reverse=True)
+        total = sum(d["bytes_up"] + d["bytes_down"] for d in devs)
+        if total > 0 and com_vol:
+            top = com_vol[0]
+            pct = round(100 * (top["bytes_up"] + top["bytes_down"]) / total)
+            itens.append({"sev": "info", "title": f"{top['display_name']} responde por {pct}% do volume medido em 24 h",
+                          "text": "Volume medido só nas conexões TCP encerradas; vídeo por HTTP/3 não entra na conta.",
+                          "device_id": top["id"]})
+
+        envio = [d for d in devs if d["bytes_up"] > 200_000_000 and d["bytes_up"] > 2 * d["bytes_down"]]
+        for d in envio[:2]:
+            itens.append({"sev": "info", "title": f"{d['display_name']} enviou mais do que recebeu",
+                          "text": "Envio acima de 200 MB em 24 h. Costuma ser backup, sincronização ou acesso remoto.",
+                          "device_id": d["id"]})
+
+        cap = _captura()
+        if cap is None:
+            itens.append({"sev": "warn", "title": "A captura não está ativa",
+                          "text": "Só há inventário; tráfego por aparelho não está sendo registrado.", "view": "geral"})
+        elif cap.get("filtro") != "rico" or (cap.get("stats") or {}).get("erros"):
+            itens.append({"sev": "info", "title": "Captura em modo reduzido",
+                          "text": f"filtro {cap.get('filtro')}, {(cap.get('stats') or {}).get('erros', 0)} pacotes com erro.",
+                          "view": "geral"})
+
+        if not any(i["sev"] in ("alert", "warn") for i in itens):
+            itens.insert(0, {"sev": "ok", "title": "Nada fora do normal",
+                             "text": f"{len(ativos)} aparelhos ativos em 24 h, todos os alertas zerados."})
+        return itens
 
     @app.get("/api/top")
     async def top(

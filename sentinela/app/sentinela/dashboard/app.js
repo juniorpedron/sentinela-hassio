@@ -129,27 +129,27 @@ async function carregarHealth() {
 // Barra com o que o sensor está de fato enxergando (contadores desde o início).
 function renderCaptura(c) {
   const bar = $("#captura-bar"); if (!bar) return;
-  if (!c) { bar.classList.add("oculto"); return; }
+  const res = $("#captura-resumo");
+  if (!c) { bar.innerHTML = '<span class="mudo">A captura não está ativa: só há inventário.</span>'; if (res) res.textContent = "· inativa"; return; }
   const st = c.stats || {};
   const item = (rot, v, tit) => `<span class="cap-item" title="${esc(tit || "")}"><b>${Number(v || 0).toLocaleString("pt-BR")}</b> ${rot}</span>`;
-  bar.innerHTML = `<span class="cap-tit mono">captura · ${esc(c.iface || "?")} · filtro ${esc(c.filtro || "?")}</span>` +
-    item("sites (TLS)", st.tls, "inícios de conexão segura com o nome do site") +
-    item("DNS", st.dns, "consultas de nome distintas") +
-    item("HTTP/3", st.quic, "inícios de conexão QUIC") +
-    item("HTTP", st.http, "requisições sem criptografia") +
-    item("conexões medidas", st.tcp_fechadas, "conexões TCP encerradas com volume medido") +
-    item("abertas", c.conexoes_abertas, "conexões TCP em andamento") +
-    item("DHCP", st.dhcp, "aparelhos que se apresentaram (nome/sistema)") +
-    item("entradas", st.entrada, "tentativas de conexão vindas de fora");
-  bar.classList.remove("oculto");
+  if (res) res.textContent = `· ${c.filtro === "rico" ? "completa" : "reduzida"} · ${Number(st.erros || 0)} erros · interface ${c.iface || "?"}`;
+  bar.innerHTML =
+    item("sites identificados", st.tls, "inícios de conexão segura em que o nome do site foi lido") +
+    item("consultas de nome", st.dns, "consultas DNS distintas") +
+    item("conexões de vídeo/app rápidas", st.quic, "inícios de conexão HTTP/3 (QUIC)") +
+    item("páginas sem criptografia", st.http, "requisições HTTP em texto claro") +
+    item("conexões com volume medido", st.tcp_fechadas, "conexões TCP encerradas") +
+    item("conexões em andamento", c.conexoes_abertas, "conexões TCP abertas agora") +
+    item("aparelhos que se apresentaram", st.dhcp, "pedidos DHCP com nome/sistema") +
+    item("conexões vindas de fora", st.entrada, "tentativas iniciadas da internet para dentro") +
+    item("volumes descartados", st.volume_descartado, "medições impossíveis ignoradas");
 }
 
 async function carregarStats() {
   try {
     const s = await apiGet("/api/stats");
-    // nº de dispositivos/desconhecidos vem de atualizarNivel (lista da LAN).
-    $("#stat-dns").textContent = (s.dns_24h ?? "—").toLocaleString ? Number(s.dns_24h || 0).toLocaleString("pt-BR") : "—";
-    $("#stat-events").textContent = Number(s.events_24h || 0).toLocaleString("pt-BR");
+    $("#stat-dns").textContent = Number(s.dns_24h || 0).toLocaleString("pt-BR");
   } catch (e) { console.error("stats", e); }
 }
 
@@ -529,6 +529,7 @@ async function carregarResumo() {
     ]);
     renderChart(tl);
     const sb = $("#stat-bytes"); if (sb) sb.textContent = fmtBytes((ov.bytes_up || 0) + (ov.bytes_down || 0));
+    const se = $("#stat-events"); if (se) { se.textContent = Number(ov.alerts_24h || 0).toLocaleString("pt-BR"); se.classList.toggle("amb", (ov.alerts_24h || 0) > 0); }
     renderNovos(ov.new_devices || []);
     const temVol = (x) => (x.bytes_up || 0) + (x.bytes_down || 0) > 0;
     renderTop($("#top-devices"), (ov.top_devices || []).slice(0, 8).map((d) => ({
@@ -554,13 +555,95 @@ function renderChart(tl) {
   const py = (v) => H - pad - ((v || 0) / maxV) * (H - 2 * pad);
   const linha = (k) => tl.map((b, i) => `${px(i).toFixed(1)},${py(b[k]).toFixed(1)}`).join(" ");
   const area = (k) => `${pad.toFixed(1)},${(H - pad).toFixed(1)} ${linha(k)} ${px(n - 1).toFixed(1)},${(H - pad).toFixed(1)}`;
+  // os baldes vêm em UTC ("AAAA-MM-DDTHH"); o eixo mostra a hora local
+  const hLocal = (b) => { const d = new Date(b.bucket + ":00:00Z"); return isNaN(d) ? "" : d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
+  const pico = tl.reduce((a, b) => ((b.flows || 0) + (b.dns || 0) > (a.flows || 0) + (a.dns || 0) ? b : a), tl[0]);
+  const marcas = [0, Math.floor((n - 1) / 3), Math.floor((2 * (n - 1)) / 3), n - 1].filter((v, i, a) => a.indexOf(v) === i);
   host.innerHTML = `
+    <div class="chart-topo mono"><span>pico: ${hLocal(pico)} · ${(pico.flows || 0)} conexões, ${(pico.dns || 0)} consultas</span><span>máx. ${maxV}/h</span></div>
     <svg viewBox="0 0 ${W} ${H}" width="100%" height="120" preserveAspectRatio="none" class="chart-svg">
       <polygon points="${area("flows")}" fill="rgba(45,212,191,0.14)" />
       <polyline points="${linha("flows")}" fill="none" stroke="var(--teal)" stroke-width="1.6" />
       <polygon points="${area("dns")}" fill="rgba(245,158,11,0.10)" />
       <polyline points="${linha("dns")}" fill="none" stroke="var(--amb)" stroke-width="1.6" />
-    </svg>`;
+    </svg>
+    <div class="chart-eixo">${marcas.map((i) => `<span>${hLocal(tl[i])}</span>`).join("")}</div>`;
+}
+
+// ----------------------- visão geral em linguagem direta -----------------------
+const SEV_ICONE = { ok: "✔", info: "•", warn: "!", alert: "‼" };
+
+async function carregarInsights() {
+  try {
+    const itens = await apiGet("/api/insights");
+    const cont = $("#resumo-insights"); if (!cont) return;
+    cont.innerHTML = itens.map((i, k) => `
+      <div class="insight sev-${esc(i.sev)}${i.view || i.device_id ? " clicavel" : ""}" data-k="${k}">
+        <span class="insight-ic">${SEV_ICONE[i.sev] || "•"}</span>
+        <div><div class="insight-tit">${esc(i.title)}</div><div class="insight-txt">${esc(i.text || "")}</div></div>
+      </div>`).join("") || '<p class="vazio">Sem observações.</p>';
+    cont.querySelectorAll(".insight.clicavel").forEach((n) => n.addEventListener("click", () => {
+      const i = itens[+n.dataset.k];
+      if (i.device_id) abrirDetalhe(i.device_id); else if (i.view) mostrarView(i.view);
+    }));
+  } catch (e) { console.error("insights", e); }
+}
+
+async function carregarAgora() {
+  try {
+    const sel = $("#agora-janela");
+    const min = sel ? parseInt(sel.value, 10) || 15 : 15;
+    const r = await apiGet("/api/now?minutes=" + min);
+    const cont = $("#agora-lista"); if (!cont) return;
+    if (!r.devices.length) { cont.innerHTML = `<p class="vazio">Nenhum aparelho com atividade nos últimos ${min} min.</p>`; return; }
+    cont.innerHTML = r.devices.slice(0, 14).map((d) => `
+      <div class="agora-item" data-id="${esc(d.id)}">
+        <span class="agora-ic">${KIND_ICON[d.kind] || "❔"}</span>
+        <div class="agora-corpo">
+          <div class="agora-nome"><b>${esc(d.name)}</b><span class="mudo mono">${haQuanto(d.last)}</span></div>
+          <div class="agora-chips">${d.services.map((sv) => `<span class="svc-chip" style="border-color:${corCat(sv.category)}66" title="${esc(sv.category)} · ${sv.count} registro(s)"><i class="dot" style="background:${corCat(sv.category)}"></i>${esc(sv.name)}</span>`).join("")}${d.mais ? `<span class="svc-chip mudo">+${d.mais}</span>` : ""}</div>
+        </div>
+      </div>`).join("");
+    cont.querySelectorAll(".agora-item").forEach((n) => n.addEventListener("click", () => abrirDetalhe(n.dataset.id)));
+  } catch (e) { console.error("agora", e); }
+}
+
+async function carregarCategorias() {
+  try {
+    const cats = (await apiGet("/api/categories?hours=24")).filter((c) => c.conns > 0 || c.bytes > 0);
+    const cont = $("#cats"); if (!cont) return;
+    if (!cats.length) { cont.innerHTML = '<p class="vazio">Sem dados ainda.</p>'; return; }
+    const total = cats.reduce((a, c) => a + c.conns, 0) || 1;
+    cont.innerHTML = cats.slice(0, 9).map((c) => `
+      <div class="top-item clicavel" data-cat="${esc(c.category)}" title="${esc((c.top || []).join(", "))}">
+        <div class="top-barra" style="width:${Math.round((100 * c.conns) / cats[0].conns)}%;background:${corCat(c.category)}33"></div>
+        <span class="top-label"><i class="dot" style="background:${corCat(c.category)}"></i>${esc(c.category)} <span class="mudo">${esc((c.top || []).slice(0, 3).join(", "))}</span></span>
+        <span class="top-total mono">${Math.round((100 * c.conns) / total)}%${c.bytes ? " · " + fmtBytes(c.bytes) : ""}</span>
+      </div>`).join("");
+    cont.querySelectorAll(".top-item").forEach((n) => n.addEventListener("click", () => {
+      estado.aba = "conexoes"; estado.trafegoBusca = n.dataset.cat; $("#trafego-busca").value = n.dataset.cat; marcarAba(); mostrarView("trafego"); renderTrafego();
+    }));
+  } catch (e) { console.error("categorias", e); }
+}
+
+const EV_ROTULO = { "inbound.tcp": "Conexão vinda de fora", "device.new": "Aparelho novo", "device.update": "Alteração no painel",
+  "device.alias": "Vínculo de MAC", "passive.name": "Nome descoberto", "discovery.ssdp": "Descoberta (UPnP)", "discovery.sweep": "Varredura da rede" };
+const EV_ROTINA = new Set(["discovery.ssdp", "discovery.sweep", "passive.name"]);
+
+async function carregarEventos() {
+  try {
+    const tb = $("#eventos-tabela"); if (!tb) return;
+    const rotina = $("#ev-rotina") && $("#ev-rotina").checked;
+    const evs = (await apiGet("/api/events?limit=600")).filter((e) => rotina || !EV_ROTINA.has(e.type)).slice(0, 200);
+    const cor = { warning: "var(--amb)", critical: "var(--verm)", info: "var(--teal)" };
+    const linhas = evs.map((e) => { const d = devPorId(e.device_id) || (estado.devices || []).find((x) => (x.members || []).some((m) => m.id === e.device_id)); return `
+      <tr><td class="mono t-hora" title="${hora(e.ts)}">${haQuanto(e.ts)}</td>
+      <td><i class="dot" style="background:${cor[e.severity] || cor.info};border-radius:50%"></i>${esc(EV_ROTULO[e.type] || e.type)}</td>
+      ${celDev(d ? d.id : "", d ? d.display_name : "—", d ? d.kind : "unknown")}
+      <td class="t-host" style="max-width:none;white-space:normal">${esc(e.title || "")}${e.detail ? ` <span class="mudo mono">${esc(e.detail)}</span>` : ""}</td></tr>`; });
+    tb.innerHTML = `<thead><tr><th>quando</th><th>tipo</th><th>aparelho</th><th>o que aconteceu</th></tr></thead><tbody>${linhas.join("") || '<tr><td colspan="4" class="vazio">Nenhum alerta ou evento neste filtro.</td></tr>'}</tbody>`;
+    tb.querySelectorAll("a[data-dev]").forEach((a) => a.addEventListener("click", (ev) => { ev.preventDefault(); if (a.dataset.dev) abrirDetalhe(a.dataset.dev); }));
+  } catch (e) { console.error("eventos", e); }
 }
 
 function renderNovos(lista) {
@@ -1040,6 +1123,16 @@ function init() {
   carregarResumo();
   carregarGrafo();
   carregarTrafego();
+  carregarInsights();
+  carregarAgora();
+  carregarCategorias();
+  carregarEventos();
+  const aj = $("#agora-janela"); if (aj) aj.addEventListener("change", carregarAgora);
+  const er = $("#ev-rotina"); if (er) er.addEventListener("change", carregarEventos);
+  setInterval(carregarAgora, 20000);
+  setInterval(carregarInsights, 60000);
+  setInterval(carregarCategorias, 60000);
+  setInterval(carregarEventos, 60000);
   conectarWS();
 
   setInterval(carregarStats, 30000);
