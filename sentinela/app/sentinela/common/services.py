@@ -13,6 +13,47 @@ from typing import Optional
 # (substring no host)  ->  (nome amigavel, categoria)
 # A ordem importa: regras mais especificas vem primeiro.
 _RULES: list[tuple[str, tuple[str, str]]] = [
+    # --- vistos na rede real em 14/11/2026 (estavam em "Outro") ---
+    ("sharepoint", ("SharePoint (Microsoft 365)", "Microsoft")),
+    ("hotmail", ("Outlook / Hotmail", "Microsoft")),
+    ("outlook", ("Outlook / Hotmail", "Microsoft")),
+    ("skype", ("Skype / Teams", "Microsoft")),
+    ("sfx.ms", ("OneDrive (Microsoft)", "Microsoft")),
+    ("live.net", ("OneDrive (Microsoft)", "Microsoft")),
+    ("visualstudio", ("Visual Studio (Microsoft)", "Dev")),
+    ("clarity.ms", ("Microsoft Clarity (rastreamento)", "Publicidade")),
+    ("datadoghq", ("Datadog (telemetria)", "Publicidade")),
+    ("acsechocaptiveportal", ("Alexa (teste de conexao)", "Nuvem")),
+    ("firetvcaptiveportal", ("Fire TV (teste de conexao)", "Nuvem")),
+    ("dssedge", ("Disney+", "Streaming")),
+    ("dssott", ("Disney+", "Streaming")),
+    ("bamgrid", ("Disney+", "Streaming")),
+    ("phantom.app", ("Phantom (carteira cripto)", "Bancos")),
+    ("metamask", ("MetaMask (carteira cripto)", "Bancos")),
+    ("tailscale", ("Tailscale (VPN)", "Sistema")),
+    ("easy4ip", ("Camera Intelbras/Dahua (nuvem)", "IoT")),
+    ("openrouter", ("OpenRouter", "IA")),
+    ("opencode", ("OpenCode", "IA")),
+    ("claudeusercontent", ("Claude (Anthropic)", "IA")),
+    ("gmail", ("Gmail", "Google")),
+    ("ggpht", ("YouTube", "Streaming")),
+    ("pki.goog", ("Certificados (Google)", "Sistema")),
+    ("lencr.org", ("Certificados (Let's Encrypt)", "Sistema")),
+    ("actalis", ("Certificados (OCSP)", "Sistema")),
+    ("verisign", ("Certificados (OCSP)", "Sistema")),
+    ("weixin", ("WeChat", "Mensagens")),
+    ("qq.com", ("WeChat / Tencent", "Mensagens")),
+    ("meethue", ("Philips Hue", "IoT")),
+    ("hacs.xyz", ("HACS (Home Assistant)", "Sistema")),
+    ("yahoo", ("Yahoo (e-mail)", "Mensagens")),
+    ("weather.com", ("Previsao do tempo", "Sistema")),
+    ("lgappstv", ("LG TV", "Sistema")),
+    ("dreame", ("Dreame (aspirador)", "IoT")),
+    ("roborock", ("Roborock (aspirador)", "IoT")),
+    (".mi.com", ("Xiaomi", "IoT")),
+    ("miui", ("Xiaomi", "IoT")),
+    ("intel.com", ("Intel (drivers)", "Sistema")),
+    ("gov.br", ("Governo (gov.br)", "Trabalho")),
     # --- jogos / consoles ---
     ("playstation", ("PlayStation", "Jogos")),
     ("sonyentertainmentnetwork", ("PlayStation", "Jogos")),
@@ -231,6 +272,36 @@ _IPS_CONHECIDOS = {
 }
 
 
+# Faixas de endereco de servicos grandes: da nome a conexoes que chegam sem
+# DNS/SNI (ex.: apps da Meta por IPv6). So faixas publicas e estaveis.
+_REDES_CONHECIDAS = [(ipaddress.ip_network(r), v) for r, v in [
+    ("2a03:2880::/32", ("Meta (Facebook / Instagram / WhatsApp)", "Social")),
+    ("157.240.0.0/16", ("Meta (Facebook / Instagram / WhatsApp)", "Social")),
+    ("31.13.64.0/18", ("Meta (Facebook / Instagram / WhatsApp)", "Social")),
+    ("2800:3f0::/32", ("Google", "Google")),
+    ("2607:f8b0::/32", ("Google", "Google")),
+    ("2001:4860::/32", ("Google", "Google")),
+    ("17.0.0.0/8", ("Apple", "Apple")),
+    ("2620:149::/32", ("Apple", "Apple")),
+    ("2a01:b740::/32", ("Apple", "Apple")),
+    ("2606:4700::/32", ("Cloudflare", "Infra")),
+    ("2a00:86c0::/32", ("Netflix", "Streaming")),
+    ("149.154.160.0/20", ("Telegram", "Mensagens")),
+    ("91.108.4.0/22", ("Telegram", "Mensagens")),
+]]
+
+
+def _por_faixa(h: str):
+    try:
+        ip = ipaddress.ip_address(h)
+    except ValueError:
+        return None
+    for rede, v in _REDES_CONHECIDAS:
+        if ip.version == rede.version and ip in rede:
+            return v
+    return None
+
+
 def _registrable(host: str) -> str:
     parts = host.split(".")
     if len(parts) >= 3 and ".".join(parts[-2:]) in _TLD2:
@@ -244,7 +315,7 @@ def friendly(host: Optional[str]) -> tuple[str, str]:
         return ("Desconhecido", _CAT_DEFAULT)
     h = host.lower().strip().rstrip(".")
     if _is_ip(h):
-        return _IPS_CONHECIDOS.get(h, (f"IP {host}", "Sem nome"))
+        return _IPS_CONHECIDOS.get(h) or _por_faixa(h) or (f"IP {host}", "Sem nome")
     for chave, (nome, cat) in _RULES:
         if chave in h:
             return (nome, cat)

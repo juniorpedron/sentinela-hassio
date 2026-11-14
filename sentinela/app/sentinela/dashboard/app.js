@@ -52,7 +52,7 @@ function mostrarView(v) {
 
 // ----------------------- formatação / identificação -----------------------
 const KIND_ICON = { router: "🌐", server: "🗄️", computer: "💻", phone: "📱", tablet: "📱", watch: "⌚",
-  tv: "📺", console: "🎮", speaker: "🔊", printer: "🖨️", camera: "📷", iot: "💡", unknown: "❔" };
+  tv: "📺", console: "🎮", speaker: "🔊", printer: "🖨️", camera: "📷", vacuum: "🧹", iot: "💡", unknown: "❔" };
 
 function fmtBytes(n) {
   n = Number(n) || 0;

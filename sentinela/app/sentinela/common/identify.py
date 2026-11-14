@@ -28,12 +28,15 @@ KINDS: dict[str, tuple[str, str]] = {
     "speaker": ("Caixa de som / assistente", "Voz"),
     "printer": ("Impressora", "IoT"),
     "camera": ("Camera", "IoT"),
+    "vacuum": ("Aspirador robo", "IoT"),
     "iot": ("Casa inteligente", "IoT"),
     "unknown": ("Nao identificado", "Outros"),
 }
 
 # (regex, tipo). A ordem importa: mais especifico primeiro.
 _TEXT_RULES: list[tuple[str, str]] = [
+    # antes de "phone": um aspirador Xiaomi nao e um celular Xiaomi
+    (r"aspirador|vacuum|roborock|dreame|roomba|deebot|rob[oô] ?(aspirador|limpa)", "vacuum"),
     (r"apple ?watch|\bwatch\b|galaxy ?watch|mi ?band|amazfit", "watch"),
     (r"ipad|\btablet\b|galaxy ?tab|kindle|fire hd", "tablet"),
     (r"iphone|android|galaxy|\bpixel\b|redmi|xiaomi|motorola|\bmoto\b|celular|oneplus|huawei p|poco", "phone"),
@@ -74,7 +77,9 @@ _UA_RULES: list[tuple[str, str, str]] = [
     (r"web0s|webos|tizen|smart-?tv|bravia|roku|crkey|aft[a-z]", "tv", "Smart TV"),
     (r"android", "phone", "Android"),
     (r"windows nt", "computer", "Windows"),
-    (r"mac os x|macintosh|darwin", "computer", "macOS"),
+    (r"mac os x|macintosh", "computer", "macOS"),
+    # CFNetwork/Darwin sozinho aparece igual em iPhone, iPad e Mac: nao decide o tipo
+    (r"cfnetwork|darwin", "", "Apple (iOS/macOS)"),
     (r"\bcros\b", "computer", "ChromeOS"),   # com limite de palavra: sem isso casava com Mi-cros-oft
     (r"linux", "computer", "Linux"),
 ]
@@ -140,7 +145,8 @@ def os_from_dhcp(vendor_class: Optional[str], params: Optional[str]) -> Optional
     if "ps4" in v or "ps5" in v or "playstation" in v:
         return "PlayStation"
     p = (params or "").replace(" ", "")
-    if not v and p.startswith("1,121,3,6,15,119,252"):
+    # iOS/macOS: 1,121,3,6,15,[108,114,]119,[162,]252
+    if not v and p.startswith("1,121,3,6,15,") and ",119," in p and p.endswith("252"):
         return "Apple (iOS/macOS)"
     return None
 
@@ -152,7 +158,7 @@ def os_from_ua(ua: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         return None, None
     for rx, kind, osname in _UA_RULES:
         if re.search(rx, s):
-            return kind, osname
+            return (kind or None), osname
     return None, None
 
 
