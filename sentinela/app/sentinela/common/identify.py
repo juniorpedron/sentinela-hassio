@@ -39,7 +39,7 @@ _TEXT_RULES: list[tuple[str, str]] = [
     (r"aspirador|vacuum|roborock|dreame|roomba|deebot|rob[oô] ?(aspirador|limpa)", "vacuum"),
     (r"apple ?watch|\bwatch\b|galaxy ?watch|mi ?band|amazfit", "watch"),
     (r"ipad|\btablet\b|galaxy ?tab|kindle|fire hd", "tablet"),
-    (r"iphone|android|galaxy|\bpixel\b|redmi|xiaomi|motorola|\bmoto\b|celular|oneplus|huawei p|poco", "phone"),
+    (r"iphone|android|galaxy|\bpixel\b|redmi|xiaomi|motorola|\bmoto\b|celular|oneplus|huawei[ _-]?(p ?smart|(p|mate|nova|y)[ _-]?\d)|(?<![a-z])honor(?![a-z])|poco", "phone"),
     (r"playstation|\bps[345]\b|xbox|nintendo|switch|steam ?deck", "console"),
     (r"alexa|\becho\b|homepod|google ?home|nest ?(mini|hub|audio)|sonos|receiver|\bavr\b|soundbar|harman|denon|yamaha", "speaker"),
     (r"\btv\b|firetv|fire ?tv|chromecast|roku|apple ?tv|webos|tizen|bravia|smart ?tv|android ?tv|mi ?box", "tv"),
