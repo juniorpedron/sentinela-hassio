@@ -61,6 +61,7 @@ do switch (SPAN) e mostra quem está na rede e o que cada aparelho acessa.
 | `exclude_macs` | `[]` | MACs fora da captura profunda (continuam no inventário). |
 | `retention_days` | `60` | Retenção desejada (a limpeza automática ainda não foi implementada). |
 | `admin_token` | `1120` | Token para alterações no painel — trocar. |
+| `ha_webhook` | *(vazio)* | Id de um webhook do Home Assistant. Quando preenchido, o Sentinela avisa o HA (em `127.0.0.1:8123`, sem sair da rede) cerca de 3 min depois de ver um aparelho inédito: nome, tipo, IP, MAC, fabricante. Não avisa de aparelho já rotulado nem de aparelho conhecido que só trocou de MAC privado; no máximo 6 avisos por hora. O id funciona como senha do aviso — não publicar. |
 
 ## Instalação e atualização
 

@@ -1,6 +1,6 @@
 # Add-on Home Assistant — Sentinela (captura de rede via SPAN)
 name: Sentinela (captura de rede)
-version: "0.4.2"
+version: "0.4.3"
 slug: sentinela
 description: >-
   Monitor da rede domestica via SPAN: captura DNS/SNI reais POR DISPOSITIVO,
@@ -34,7 +34,11 @@ options:
   # Retencao dos dados em dias.
   retention_days: 60
   admin_token: "1120"
+  # Aviso de "aparelho novo na rede": id de um webhook do Home Assistant
+  # (automacao com gatilho Webhook, somente local). Vazio = desligado.
+  ha_webhook: ""
 schema:
+  ha_webhook: "str?"
   capture_iface: str
   lan_cidr: "str?"
   exclude_macs:

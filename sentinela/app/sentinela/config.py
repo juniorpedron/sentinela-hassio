@@ -89,6 +89,9 @@ class Settings:
 
     #: URL de webhook para alertas (eventos warning/critical). Opcional.
     alert_webhook: str | None = None
+    #: Webhook do Home Assistant para "aparelho novo na rede": id do webhook
+    #: (vira http://127.0.0.1:8123/api/webhook/<id>) ou URL completa. Opcional.
+    ha_webhook: str | None = None
 
     #: MACs excluidos da CAPTURA profunda (sensores/IoT). Continuam no
     #: inventario, mas sem gravar DNS/SNI. Vem de EXCLUDE_MACS (csv).
@@ -145,6 +148,7 @@ def get_settings() -> Settings:
         retention_pcap_days=_env_int("RETENTION_PCAP_DAYS", 7),
         admin_token=admin_token,
         alert_webhook=_env("ALERT_WEBHOOK"),
+        ha_webhook=_env("HA_WEBHOOK"),
         home_gateway_mac=_env("HOME_GATEWAY_MAC", "24:a5:2c:7b:5d:87"),
         readonly=(_env("SENTINELA_READONLY", "auto") or "auto").lower(),
         exclude_macs=tuple(

@@ -8,6 +8,8 @@ export RETENTION_PCAP_DAYS="$(bashio::config 'retention_days')"
 export SENTINELA_MODE="pi"
 TOK="$(bashio::config 'admin_token')"
 if [ -n "${TOK}" ] && [ "${TOK}" != "null" ]; then export ADMIN_TOKEN="${TOK}"; fi
+HAW="$(bashio::config 'ha_webhook')"
+if [ -n "${HAW}" ] && [ "${HAW}" != "null" ]; then export HA_WEBHOOK="${HAW}"; fi
 export SENTINELA_READONLY="0"
 export API_HOST="0.0.0.0"
 export API_PORT="8099"                 # porta interna do ingress

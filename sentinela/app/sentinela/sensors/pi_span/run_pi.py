@@ -49,6 +49,15 @@ async def _serve() -> None:
         except Exception:  # pragma: no cover - alerta e opcional
             pass
 
+    # Aviso de "aparelho novo na rede" para o Home Assistant (opcional).
+    from sentinela.common import ha_notify
+    url_ha = ha_notify.url_do_webhook(settings.ha_webhook)
+    if url_ha:
+        storage.add_listener(ha_notify.AvisoNovos(storage, url_ha, settings.lan_cidr))
+        log.info("aviso de aparelho novo ao Home Assistant: ativo")
+    elif settings.ha_webhook:
+        log.warning("ha_webhook invalido (use o id do webhook ou uma URL http): aviso desativado")
+
     tasks = [
         asyncio.create_task(discovery.run_forever(storage, settings), name="discovery"),
         asyncio.create_task(passive_listen.run_forever(storage, settings), name="passive"),
